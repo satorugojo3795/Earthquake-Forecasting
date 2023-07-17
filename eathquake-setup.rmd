@@ -1,0 +1,84 @@
+---
+title: "earthquake forecasting setup"
+author: "Saksham Joshi"
+date: "2023-07-17"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+install.packages("tidyquant")
+install.packages("lemon")
+install.packages("ggpubr")
+```
+
+```{r warning=FALSE}
+library(ETAS.inlabru)
+
+library(tidyquant)
+library(gridExtra)
+library(grid)
+library(lemon)
+library(ggplot2)
+library(ggpubr)
+library(GGally)
+
+library(inlabru)
+library(INLA)
+library(ETAS.inlabru)
+
+# inla.setOption(pardiso.license="~/sys/licences/pardiso.lic")
+
+library(dplyr)
+
+# Increase num.threads if you have more cores on your computer
+INLA::inla.setOption(num.threads = 2)
+```
+
+```{r}
+#data
+head(horus)
+```
+
+```{r}
+length(horus)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
