@@ -9,10 +9,17 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+```{r warning=FALSE}
+install.packages("systemfonts")
+install.packages("textshaping")
+install.packages("ragg")
+install.packages("tidyverse")
 install.packages("tidyquant")
 install.packages("lemon")
 install.packages("ggpubr")
+install.packages("rnaturalearth")
+install.packages("rnaturalearthdata")
+install.packages("ggspatial")
 ```
 
 ```{r warning=FALSE}
@@ -39,12 +46,19 @@ INLA::inla.setOption(num.threads = 2)
 ```
 
 ```{r}
-#data
-head(horus)
-```
+library(ETAS.inlabru)
+library(ggplot2)
 
-```{r}
-length(horus)
+library(rnaturalearth)
+library(terra)
+library(sf)
+library(ggspatial)
+library(rnaturalearthdata)
+library(dplyr)
+library(lubridate)
+
+## This is just the EPSG equivalent of WGS84
+crs_wgs84 <- st_crs('EPSG:4326')
 ```
 
 ```{r}
