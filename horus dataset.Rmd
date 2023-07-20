@@ -329,11 +329,7 @@ ggplot() +
 ```
 
 ```{r}
-
-```
-
-```{r}
-
+unique(daily.fore$fore.df$gen)
 ```
 
 ```{r}
