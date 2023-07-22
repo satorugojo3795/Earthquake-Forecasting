@@ -409,5 +409,9 @@ unique(daily.fore$fore.df$gen)
 ```
 
 ```{r}
+YOU GOT THIS BRO
 
+YOU ARE DOING GREAT
+
+KEEP IT UP IT WILL SOON BE OVER!
 ```
