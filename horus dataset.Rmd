@@ -1,8 +1,8 @@
 ---
-title: "horus dataset"
+title: "functions"
 author: "Saksham"
-date: "2023-07-20"
-output: pdf_document
+date: "2023-07-26"
+output: html_document
 ---
 
 ```{r setup, include=FALSE}
@@ -13,12 +13,17 @@ knitr::opts_chunk$set(echo = TRUE)
 library(ETAS.inlabru)
 library(ggplot2)
 
-# Increase num.cores if you have more cores on your computer, and reduce it
-# if you have fewer!
+# Increase/decrease num.cores if you have more/fewer cores on your computer.
+# future::multisession works on both Windows, MacOS, and Linux
 num.cores <- 6
-
+future::plan(future::multisession, workers = num.cores)
 INLA::inla.setOption(num.threads = num.cores)
+# To deactivate parallelism, run
+#   future::plan(future::sequential)
+#   INLA::inla.setOption(num.threads = 1)
 ```
+
+## Set up the transformations
 
 ```{r}
 # set copula transformations list
@@ -40,10 +45,7 @@ inv.link.f <- list(
 )
 ```
 
-```{r}
-# load HORUS catalogue
-head(horus)
-```
+## Data Preprocessing
 
 ```{r}
 # transform time string in Date object
@@ -86,10 +88,6 @@ ggplot(aquila, aes(time_date, M)) +
 ```
 
 ```{r}
-
-```
-
-```{r}
 # set up data.frame for model fitting
 aquila.bru <- data.frame(
   ts = as.numeric(
@@ -100,16 +98,7 @@ aquila.bru <- data.frame(
 )
 ```
 
-```{r}
-# set up data.frame for model fitting
-aquila.bru <- data.frame(
-  ts = as.numeric(
-    difftime(aquila$time_date, start.date, units = "days")
-  ),
-  magnitudes = aquila$M,
-  idx.p = 1:nrow(aquila)
-)
-```
+## set up the initial values
 
 ```{r}
 # set up list of initial values
@@ -122,6 +111,8 @@ th.init <- list(
 )
 ```
 
+## set the list of inlabru options
+
 ```{r}
 # set up list of bru options
 bru.opt.list <- list(
@@ -132,286 +123,451 @@ bru.opt.list <- list(
 )
 ```
 
+## function to fit the model
+
 ```{r}
-# set starting and time of the time interval used for model fitting. In this case, we use the interval covered by the data.
-T1 <- 0
-T2 <- max(aquila.bru$ts) + 0.2 # Use max(..., na.rm = TRUE) if there may still be NAs here
-# fit the model
-aquila.fit <- Temporal.ETAS(
-  total.data = aquila.bru,
-  M0 = M0,
-  T1 = T1,
-  T2 = T2,
-  link.functions = link.f,
+model_fit <- function(full_data,
+                      magnitude,
+                      start_time,
+                      end_time,
+                      link_functions,
+                      bru_options_list){
+  aquila.fit <- Temporal.ETAS(
+  total.data = full_data,
+  M0 = magnitude,
+  T1 = start_time,
+  T2 = end_time,
+  link.functions = link_functions,
   coef.t. = 1,
   delta.t. = 0.1,
   N.max. = 5,
-  bru.opt = bru.opt.list
-)
+  bru.opt = bru_options_list
+  )
+  return(aquila.fit)
+}
 ```
 
+### fit the model
+
 ```{r}
-# create input list to explore model output
-input_list <- list(
-  model.fit = aquila.fit,
-  link.functions = link.f
-)
+T1 <- 0
+T2 <- max(aquila.bru$ts) + 0.2 # Use max(..., na.rm = TRUE) if there may still be NAs here
+horus_data_fit <- model_fit(full_data=aquila.bru,
+                            magnitude = M0,
+                            start_time = T1,
+                            end_time = T2,
+                            link_functions = link.f,
+                            bru_options_list = bru.opt.list)
 ```
 
-```{r}
-# get marginal posterior information
-post.list <- get_posterior_param(input.list = input_list)
+## function to generate input list
 
-# plot marginal posteriors
-post.list$post.plot
+```{r}
+
+get_input_list <- function(fitted_model,
+                           link_functions)
+  {
+  # create input list to explore model output
+  input_list <- list(
+    model.fit = fitted_model,
+    link.functions = link_functions
+  )
+  return(input_list)
+}
+
+horus_input_list <- get_input_list(horus_data_fit,
+                                   link.f)
 ```
 
+##function to check posterior marginal distributions
+
 ```{r}
-post.samp <- post_sampling(
+marg_posterior <- function(input_list,
+                           num.cores){
+  # get marginal posterior information
+  post.list <- get_posterior_param(input.list = input_list)
+  
+  # plot marginal posteriors
+  post.list$post.plot
+}
+```
+
+## function to get a posterior sample
+
+```{r}
+get_post_sample <- function(input_list){
+  #now get a posterior sample
+  post.samp <- post_sampling(
   input.list = input_list,
   n.samp = 1000,
   max.batch = 1000,
   ncore = num.cores
-)
-
-head(post.samp)
+  )
+  
+  return(post.samp)
+}
 ```
 
+function to plot pair plots
+
 ```{r}
-pair.plot <- post_pairs_plot(
-  post.samp = post.samp,
+pair_plots_plotter <- function(post_sample){
+  pair.plot <- post_pairs_plot(
+  post.samp = post_sample,
   input.list = NULL,
   n.samp = NULL,
   max.batch = 1000
-)
-pair.plot$pair.plot
+  )
+  pair.plot$pair.plot
+}
+```
+
+c
+
+```{r}
+#checking posterior marginals, getting  posterior samples and plottting pair plots
+marg_posterior(input_list = horus_input_list,num.cores = num.cores )
+horus_post_sample <- get_post_sample(horus_input_list)
+pair_plots_plotter(post_sample = horus_post_sample)
+```
+
+## function to check posterior number of events
+
+```{r}
+check_posterior_events <- function(input_list,
+                                   full_data,
+                                   start_time,
+                                   end_time,
+                                   magnitude){
+  # set additional elements of the list
+  input_list$T12 <- c(start_time, end_time)
+  input_list$M0 <- magnitude
+  input_list$catalog.bru <- full_data
+  N.post <- get_posterior_N(input.list = input_list)
+  my_plot <- N.post$post.plot
+  return(list(input_list = input_list,
+         my_plot = my_plot))
+}
 ```
 
 ```{r}
-# set additional elements of the list
-input_list$T12 <- c(T1, T2)
-input_list$M0 <- M0
-input_list$catalog.bru <- aquila.bru
+result <- check_posterior_events(input_list = horus_input_list,
+                                 full_data = aquila.bru,
+                                 start_time = T1,
+                                 end_time = T2,
+                                 magnitude = M0) 
+
+result$my_plot
+horus_input_list <- result$input_list
 ```
 
 ```{r}
-N.post <- get_posterior_N(input.list = input_list)
-N.post$post.plot
+# plot_function <- function(input_list,post.samp){
+#   triggering_fun_plot(
+#   input.list = input_list,
+#   post.samp = post.samp,
+#   n.samp = NULL, magnitude = 4,
+#   t.end = 5, n.breaks = 100
+#   )
+#   triggering_fun_plot_prior(input.list = input_list, magnitude = 4, 
+#                             n.samp = 1000, t.end = 10)
+#   omori_plot_posterior(input.list = input_list, post.samp = post.samp, 
+#                        n.samp = NULL, t.end = 5)
+#   omori_plot_prior(input.list = input_list, n.samp = 1000, t.end = 5)
+# }
+# 
+# plot_function(input_list = horus_input_list,
+#               post.samp = horus_post_sample)
 ```
 
-```{r}
-triggering_fun_plot(
-  input.list = input_list,
-  post.samp = post.samp,
-  n.samp = NULL, magnitude = 4,
-  t.end = 5, n.breaks = 100
-)
-```
+## function to generate synthetic catalogues
 
 ```{r}
-triggering_fun_plot_prior(input.list = input_list, magnitude = 4, n.samp = 1000, t.end = 10)
-```
-
-```{r}
-omori_plot_posterior(input.list = input_list, post.samp = post.samp, n.samp = NULL, t.end = 5)
-```
-
-```{r}
-omori_plot_prior(input.list = input_list, n.samp = 1000, t.end = 5)
-```
-
-```{r}
-# maximum likelihood estimator for beta
-beta.p <- 1 / (mean(aquila.bru$magnitudes) - M0)
-```
-
-```{r}
-synth.cat.list <- generate_temporal_ETAS_synthetic(
+generate_synthetic_data <- function(post.samp,
+                                    beta.p,
+                                    magnitude,
+                                    start_time,
+                                    end_time,
+                                    Ht){
+  synth.cat.list <- generate_temporal_ETAS_synthetic(
   theta = post.samp[1, ], # ETAS parameters
   beta.p = beta.p, # magnitude distribution parameter
-  M0 = M0, # cutoff magnitude
-  T1 = T1, # starting time
-  T2 = T2, # end time
-  Ht = aquila.bru[which.max(aquila.bru$magnitudes), ] # known events
-)
-# merge into unique data.frame
-synth.cat.df <- do.call(rbind, synth.cat.list)
-# order events by time
-synth.cat.df <- synth.cat.df[order(synth.cat.df$ts), ]
-
-ggplot(synth.cat.df, aes(ts, magnitudes, color = as.factor(gen))) +
-  geom_point(size = 0.5)
-```
-
-```{r}
-set.seed(2)
-n.cat <- 8
-# generate catalogues as list of lists
-multi.synth.cat.list <- lapply(seq_len(n.cat), \(x)
-generate_temporal_ETAS_synthetic(
-  theta = post.samp[x, ],
-  beta.p = beta.p,
-  M0 = M0,
-  T1 = T1,
-  T2 = T2,
-  Ht = aquila.bru[which.max(aquila.bru$magnitudes), ]
-))
-
-# store catalogues as list of data.frames
-multi.synth.cat.list.df <- lapply(multi.synth.cat.list, \(x) do.call(rbind, x))
-# set catalogue identifier
-multi.synth.cat.list.df <- lapply(seq_len(n.cat), \(x) cbind(multi.synth.cat.list.df[[x]],
-  cat.idx = x
-))
-# merge catalogues in unique data.frame
-multi.synth.cat.df <- do.call(rbind, multi.synth.cat.list.df)
-
-# we need to bing the synthetics with the observed catalogue for plotting
-cat.df.for.plotting <- rbind(
-  multi.synth.cat.df,
-  cbind(aquila.bru[, c("ts", "magnitudes")],
-    gen = NA,
-    cat.idx = "observed"
+  M0 = magnitude, # cutoff magnitude
+  T1 = start_time, # starting time
+  T2 = end_time, # end time
+  Ht = Ht # known events
   )
+  # merge into unique data.frame
+  synth.cat.df <- do.call(rbind, synth.cat.list)
+  # order events by time
+  synth.cat.df <- synth.cat.df[order(synth.cat.df$ts), ]
+  return(synth.cat.df)
+}
+```
+## generating first synthetic data
+```{r}
+beta.p <- 1 / (mean(aquila.bru$magnitudes) - M0)
+synthetic_data_1 <- generate_synthetic_data(post.samp = horus_post_sample,
+                                            beta.p = beta.p,
+                                            magnitude = M0,
+                                            start_time = T1,
+                                            end_time = T2,
+                                            Ht = NULL
+                                            )
+```
+
+```{r}
+library(cluster)
+#Function to get the optimal number of clusters
+count_clusters <- function(full_data){
+  
+  data_for_clustering <- full_data[, c("ts", "magnitudes")]
+  
+  # Prepare a range of possible cluster numbers
+  k_values <- 2:10
+  
+  # Initialize an empty vector to store the within-cluster sum of squares (WCSS)
+  awss <- vector("numeric", length(k_values))
+  
+  # Calculate AWSS for each value of k
+  for (i in seq_along(k_values)) {
+    kmeans_result <- kmeans(data_for_clustering, centers = k_values[i])
+    awss[i] <- mean(kmeans_result$withinss)
+  }
+  
+  # Calculate the relative change in WSS for each value of k
+  relative_change_wss <- numeric(length(awss) - 1)
+  for (i in 2:length(awss)) {
+    relative_change_wss[i - 1] <- (awss[i - 1] - awss[i]) / awss[i - 1] * 100
+  }
+  
+  # Set the threshold for relative change in WSS to determine the optimal number of clusters
+  threshold <- 10  # You can adjust this threshold as needed
+  
+  # Plot the elbow curve
+  plot(k_values, awss, 
+       type = "b", pch = 19,
+       frame = FALSE,
+       xlab = "Number of Clusters (k)",
+       ylab = "Average Within-Cluster Sum of Squares (AWSS)")
+  
+  # Identify the optimal number of clusters based on the threshold
+  optimal_k <- k_values[which.max(relative_change_wss <= threshold)]
+  
+  # Identify the "elbow" point using some threshold (you can adjust this threshold as needed)
+  # elbow_point <- k_values[which(diff(awss) < mean(diff(awss)))[1]]
+  
+  # Print the identified optimal number of clusters
+  # cat("Optimal number of clusters:", elbow_point, "\n")
+  # return(elbow_point)
+  return (optimal_k)
+}
+```
+
+```{r}
+
+quantify_data_characteristics <- function(full_data){
+  main_earthquakes <- sum(full_data$magnitude > 4.5)
+  clusters <- count_clusters(full_data = full_data)
+  return(list(main_earthquakes = main_earthquakes,
+              clusters = clusters))
+}
+
+```
+                                      
+
+```{r}
+
+characteristics_synthetic_data_1 <- quantify_data_characteristics(full_data = 
+                                                                    synthetic_data_1)
+```
+
+```{r}
+characteristics_synthetic_data_1$clusters
+```
+
+```{r}
+synthetic_data_1 <- generate_synthetic_data(post.samp = horus_post_sample,
+                                            beta.p = beta.p,
+                                            magnitude = M0,
+                                            start_time = T1,
+                                            end_time = T2,
+                                            Ht = NULL
+                                            )
+```
+
+```{r}
+nrow(synthetic_data_1)
+```
+
+## fit model on the firs synthetic data
+
+```{r}
+horus_post_estimates <- apply(horus_post_sample, 2, mean) 
+```
+
+```{r}
+horus_post_estimates
+```
+### set the new priors
+
+```{r}
+synthetic_data_1_priors <- list(
+  mu = \(x) unif_t(x, 0.30096, 0.30098),
+  K = \(x) gamma_t(x, 0.3, 0.6),
+  alpha = \(x) unif_t(x, 2.4381, 2.4383),
+  c_ = \(x) gamma_t(x, 0.3, 0.6),
+  p = \(x) unif_t(x, 1, 10)
 )
+```
 
-# plot them
-ggplot(cat.df.for.plotting, aes(ts, magnitudes)) +
-  geom_point(size = 0.5) +
-  geom_point(
-    data = aquila.bru[which.max(aquila.bru$magnitudes), ],
-    mapping = aes(ts, magnitudes),
-    color = "red"
-  ) +
-  facet_wrap(facets = ~cat.idx)
+### fit the model
+
+```{r}
+synthetic_data_1_fit <- model_fit(full_data=synthetic_data_1,
+                                  magnitude = M0,
+                                  start_time = T1,
+                                  end_time = T2,
+                                  link_functions = synthetic_data_1_priors,
+                                  bru_options_list = bru.opt.list)
+```
+
+### get posterior plots
+
+```{r}
+#checking posterior marginals, getting  posterior samples and plotting pair plots
+synthetic_data_1_input_list <- get_input_list(synthetic_data_1_fit,
+                                   synthetic_data_1_priors)
+
+marg_posterior(input_list = synthetic_data_1_input_list,
+               num.cores = num.cores )
+synthetic_data_1_post_sample <- get_post_sample(synthetic_data_1_input_list)
+pair_plots_plotter(post_sample = synthetic_data_1_post_sample)
 ```
 
 ```{r}
-# express 1 minute in days
-min.in.days <- 1 / (24 * 60)
-# find time of the event with the greatest magnitude
-t.max.mag <- aquila.bru$ts[which.max(aquila.bru$magnitudes)]
-# set starting time of the forecasting period
-T1.fore <- t.max.mag + min.in.days
-# set forecast length
-fore.length <- 1
-# set end time of the forecasting period
-T2.fore <- T1.fore + fore.length
-# set known data
-Ht.fore <- aquila.bru[aquila.bru$ts < T1.fore, ]
-
-# produce forecast
-daily.fore <- Temporal.ETAS.forecast(
-  post.samp = post.samp, # ETAS parameters posterior samples
-  n.cat = nrow(post.samp), # number of synthetic catalogues
-  beta.p = beta.p, # magnitude distribution parameter
-  M0 = M0, # cutoff magnitude
-  T1 = T1.fore, # forecast starting time
-  T2 = T2.fore, # forecast end time
-  Ht = Ht.fore, # known events
-  ncore = 1
-) # number of cores
+synthetic_data_1_post_estimates <- apply(synthetic_data_1_post_sample, 2, mean) 
+synthetic_data_1_post_estimates
+```
+```{r}
+horus_post_estimates
 ```
 
 ```{r}
-# find number of events per catalogue
-N.fore <- vapply(
-  seq_len(daily.fore$n.cat),
-  \(x) sum(daily.fore$fore.df$cat.idx == x), 0
+X <- rnorm(1000)
+gamma.X <- gamma_t(X,100,0.01)
+df.to.plot <- data.frame(
+    value = gamma.X,
+    distribution = "Gamma"
+  )
+ggplot(df.to.plot, aes(value)) +
+  geom_histogram() +
+  theme_bw() +
+  facet_wrap(facets = ~distribution, scales = "free")
+
+```
+## fit second model
+### generate second sample
+```{r}
+synthetic_data_2 <- generate_synthetic_data(post.samp = horus_post_sample,
+                                            beta.p = beta.p,
+                                            magnitude = M0,
+                                            start_time = T1,
+                                            end_time = T2,
+                                            Ht = NULL
+                                            )
+```
+
+```{r}
+synthetic_data_2_priors <- list(
+  mu = \(x) unif_t(x, 0.30096, 0.30098),
+  K = \(x) gamma_t(x, 0.3, 0.6),
+  alpha = \(x) unif_t(x, 2.4381, 2.4383),
+  c_ = \(x) gamma_t(x, 0.3, 0.6),
+  p = \(x) unif_t(x, 1.177007, 1.177009)
 )
-# find number of observed events in the forecasting period
-N.obs <- sum(aquila.bru$ts >= T1.fore & aquila.bru$ts <= T2.fore)
-# plot the distribution
-ggplot() +
-  geom_histogram(aes(x = N.fore, y = after_stat(density)), binwidth = 1) +
-  geom_vline(xintercept = N.obs) +
-  xlim(100, 500)
 ```
 
 ```{r}
-unique(daily.fore$fore.df$gen)
+synthetic_data_2_fit <- model_fit(full_data=synthetic_data_2,
+                                  magnitude = M0,
+                                  start_time = T1,
+                                  end_time = T2,
+                                  link_functions = synthetic_data_2_priors,
+                                  bru_options_list = bru.opt.list)
+```
+### get posteriors
+```{r}
+synthetic_data_2_input_list <- get_input_list(synthetic_data_2_fit,
+                                   synthetic_data_2_priors)
+
+marg_posterior(input_list = synthetic_data_2_input_list,
+               num.cores = num.cores )
+synthetic_data_2_post_sample <- get_post_sample(synthetic_data_2_input_list)
+pair_plots_plotter(post_sample = synthetic_data_2_post_sample)
+```
+### get posterior estimates
+```{r}
+synthetic_data_2_post_estimates <- apply(synthetic_data_2_post_sample, 2, mean) 
+synthetic_data_2_post_estimates
+```
+```{r}
+horus_post_estimates
+```
+It is observed that on fixing 3 parameters- mu, alpha and p, our model is able to closely estimate the true parameters.
+
+Now let's see which parameter leads to better estimates of 
+
+## fit the third model
+### set the prior
+```{r}
+synthetic_data_3_priors <- list(
+  mu = \(x) unif_t(x, 0.30096, 0.30098),
+  K = \(x) unif_t(x, 0.13751, 0.13753),
+  alpha = \(x) gamma_t(x, 0.3, 0.6),
+  c_ = \(x) unif_t(x, 0.070039, 0.07005),
+  p = \(x) unif_t(x, 1.177008, 1.1770089)
+)
+```
+###generate the dataset
+```{r}
+synthetic_data_3 <- generate_synthetic_data(post.samp = horus_post_sample,
+                                            beta.p = beta.p,
+                                            magnitude = M0,
+                                            start_time = T1,
+                                            end_time = T2,
+                                            Ht = NULL
+                                            )
 ```
 
 ```{r}
+synthetic_data_3_fit <- model_fit(full_data=synthetic_data_3,
+                                  magnitude = M0,
+                                  start_time = T1,
+                                  end_time = T2,
+                                  link_functions = synthetic_data_3_priors,
+                                  bru_options_list = bru.opt.list)
+```
+### get posteriors
+```{r}
+#checking posterior marginals, getting  posterior samples and plotting pair plots
+synthetic_data_3_input_list <- get_input_list(synthetic_data_3_fit,
+                                   synthetic_data_3_priors)
 
+marg_posterior(input_list = synthetic_data_3_input_list,
+               num.cores = num.cores )
+synthetic_data_3_post_sample <- get_post_sample(synthetic_data_3_input_list)
+pair_plots_plotter(post_sample = synthetic_data_3_post_sample)
+```
+### get posterior estimates
+```{r}
+synthetic_data_3_post_estimates <- apply(synthetic_data_3_post_sample, 2, mean) 
+synthetic_data_3_post_estimates
 ```
 
 ```{r}
-
+horus_post_estimates
 ```
 
 ```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-YOU GOT THIS BRO
-
-YOU ARE DOING GREAT
-
-KEEP IT UP IT WILL SOON BE OVER!
 ```
