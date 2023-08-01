@@ -1,0 +1,619 @@
+---
+title: "Earthquake"
+author: "Saksham"
+date: "2023-08-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ETAS.inlabru)
+library(ggplot2)
+
+# Increase/decrease num.cores if you have more/fewer cores on your computer.
+# future::multisession works on both Windows, MacOS, and Linux
+num.cores <- 6
+future::plan(future::multisession, workers = num.cores)
+INLA::inla.setOption(num.threads = num.cores)
+# To deactivate parallelism, run
+#   future::plan(future::sequential)
+#   INLA::inla.setOption(num.threads = 1)
+```
+
+## Set up the transformations
+
+```{r}
+# set copula transformations list
+link.f <- list(
+  mu = \(x) gamma_t(x, 0.3, 0.6),
+  K = \(x) unif_t(x, 0, 10),
+  alpha = \(x) unif_t(x, 0, 10),
+  c_ = \(x) unif_t(x, 0, 10),
+  p = \(x) unif_t(x, 1, 10)
+)
+
+# set inverse copula transformations list
+inv.link.f <- list(
+  mu = \(x) inv_gamma_t(x, 0.3, 0.6),
+  K = \(x) inv_unif_t(x, 0, 10),
+  alpha = \(x) inv_unif_t(x, 0, 10),
+  c_ = \(x) inv_unif_t(x, 0, 10),
+  p = \(x) inv_unif_t(x, 1, 10)
+)
+```
+
+## Data Preprocessing
+
+```{r}
+# transform time string in Date object
+horus$time_date <- as.POSIXct(
+  horus$time_string,
+  format = "%Y-%m-%dT%H:%M:%OS"
+)
+# There may be some incorrectly registered data-times in the original data set,
+# that as.POSIXct() can't convert, depending on the system.
+# These should ideally be corrected, but for now, we just remove the rows that
+# couldn't be converted.
+horus <- na.omit(horus)
+
+# set up parameters for selection
+start.date <- as.POSIXct("2009-01-01T00:00:00", format = "%Y-%m-%dT%H:%M:%OS")
+end.date <- as.POSIXct("2010-01-01T00:00:00", format = "%Y-%m-%dT%H:%M:%OS")
+min.longitude <- 10.5
+max.longitude <- 16
+min.latitude <- 40.5
+max.latitude <- 45
+M0 <- 2.5
+
+# set up conditions for selection
+aquila.sel <- (horus$time_date >= start.date) &
+  (horus$time_date < end.date) &
+  (horus$lon >= min.longitude) &
+  (horus$lon <= max.longitude) &
+  (horus$lat >= min.latitude) &
+  (horus$lat <= max.latitude) &
+  (horus$M >= M0)
+
+# select
+aquila <- horus[aquila.sel, ]
+```
+
+```{r}
+ggplot(aquila, aes(time_date, M)) +
+  geom_point() +
+  theme_bw()
+```
+
+```{r}
+# set up data.frame for model fitting
+aquila.bru <- data.frame(
+  ts = as.numeric(
+    difftime(aquila$time_date, start.date, units = "days")
+  ),
+  magnitudes = aquila$M,
+  idx.p = 1:nrow(aquila)
+)
+```
+
+## set up the initial values
+
+```{r}
+# set up list of initial values
+th.init <- list(
+  th.mu = inv.link.f$mu(0.5),
+  th.K = inv.link.f$K(0.1),
+  th.alpha = inv.link.f$alpha(1),
+  th.c = inv.link.f$c_(0.1),
+  th.p = inv.link.f$p(1.1)
+)
+```
+
+## set the list of inlabru options
+
+```{r}
+# set up list of bru options
+bru.opt.list <- list(
+  bru_verbose = 3, # type of visual output
+  bru_max_iter = 70, # maximum number of iterations
+  # bru_method = list(max_step = 0.5),
+  bru_initial = th.init # parameters' initial values
+)
+```
+
+## function to fit the model
+
+```{r}
+model_fit <- function(full_data,
+                      magnitude,
+                      start_time,
+                      end_time,
+                      link_functions,
+                      bru_options_list){
+  aquila.fit <- Temporal.ETAS(
+  total.data = full_data,
+  M0 = magnitude,
+  T1 = start_time,
+  T2 = end_time,
+  link.functions = link_functions,
+  coef.t. = 1,
+  delta.t. = 0.1,
+  N.max. = 5,
+  bru.opt = bru_options_list
+  )
+  return(aquila.fit)
+}
+```
+
+### fit the model
+
+```{r}
+T1 <- 0
+T2 <- max(aquila.bru$ts) + 0.2 # Use max(..., na.rm = TRUE) if there may still be NAs here
+horus_data_fit <- model_fit(full_data=aquila.bru,
+                            magnitude = M0,
+                            start_time = T1,
+                            end_time = T2,
+                            link_functions = link.f,
+                            bru_options_list = bru.opt.list)
+```
+
+## function to generate input list
+
+```{r}
+
+get_input_list <- function(fitted_model,
+                           link_functions)
+  {
+  # create input list to explore model output
+  input_list <- list(
+    model.fit = fitted_model,
+    link.functions = link_functions
+  )
+  return(input_list)
+}
+
+horus_input_list <- get_input_list(horus_data_fit,
+                                   link.f)
+```
+
+##function to check posterior marginal distributions
+
+```{r}
+marg_posterior <- function(input_list,
+                           var_name,
+                           num.cores){
+  # get marginal posterior information
+  post.list <- get_posterior_param(input.list = input_list)
+  
+  # plot marginal posteriors
+  plot <- post.list$post.plot
+  
+  # Add the variable name as the title
+  title <- paste("Marginal Posterior for", var_name)
+  main_title <- list(text = title, line = 2)  # Adjust line to set title position
+  
+  # Add the title to the plot using the 'main' argument
+  plot_with_title <- plot + ggtitle(main_title)
+  
+  # return(plot_with_title)
+  
+  return(plot_with_title)
+}
+```
+
+## function to get a posterior sample
+
+```{r}
+get_post_sample <- function(input_list){
+  #now get a posterior sample
+  post.samp <- post_sampling(
+  input.list = input_list,
+  n.samp = 1000,
+  max.batch = 1000,
+  ncore = num.cores
+  )
+  return(post.samp)
+}
+```
+
+## function to plot pair plots
+
+```{r}
+pair_plots_plotter <- function(post_sample,
+                               var_name){
+  pair.plot <- post_pairs_plot(
+  post.samp = post_sample,
+  input.list = NULL,
+  n.samp = NULL,
+  max.batch = 1000
+  )
+  plot <- pair.plot$pair.plot
+  # Add the variable name as the title
+  title <- paste("pair plot for", var_name)
+  main_title <- list(text = title, line = 2)  # Adjust line to set title position
+  
+  # Add the title to the plot using the 'main' argument
+  plot_with_title <- plot + ggtitle(main_title)
+  
+  # return(plot_with_title)
+  
+  return(plot_with_title)
+}
+```
+
+```{r}
+#checking posterior marginals, getting  posterior samples and plottting pair plots
+  
+invisible({
+  marg_plot <- marg_posterior(input_list = horus_input_list,
+                             var_name = "horus data",
+                             num.cores = num.cores)
+  print(marg_plot)
+  
+  horus_post_sample <- get_post_sample(horus_input_list)
+  
+  pair_plot <- pair_plots_plotter(post_sample = horus_post_sample,
+                     var_name = "horus data")
+  print(pair_plot)
+})
+```
+
+## function to check posterior number of events
+
+```{r}
+check_posterior_events <- function(input_list,
+                                   full_data,
+                                   start_time,
+                                   end_time,
+                                   magnitude){
+  # set additional elements of the list
+  input_list$T12 <- c(start_time, end_time)
+  input_list$M0 <- magnitude
+  input_list$catalog.bru <- full_data
+  N.post <- get_posterior_N(input.list = input_list)
+  my_plot <- N.post$post.plot
+  return(list(input_list = input_list,
+         my_plot = my_plot))
+}
+```
+
+```{r}
+result <- check_posterior_events(input_list = horus_input_list,
+                                 full_data = aquila.bru,
+                                 start_time = T1,
+                                 end_time = T2,
+                                 magnitude = M0) 
+
+result$my_plot
+horus_input_list <- result$input_list
+```
+
+## function to generate synthetic catalogues
+
+```{r}
+generate_synthetic_data <- function(post.samp,
+                                    beta.p,
+                                    magnitude,
+                                    start_time,
+                                    end_time,
+                                    Ht){
+  synth.cat.list <- generate_temporal_ETAS_synthetic(
+  theta = post.samp[1, ], # ETAS parameters
+  beta.p = beta.p, # magnitude distribution parameter
+  M0 = magnitude, # cutoff magnitude
+  T1 = start_time, # starting time
+  T2 = end_time, # end time
+  Ht = Ht # known events
+  )
+  # merge into unique data.frame
+  synth.cat.df <- do.call(rbind, synth.cat.list)
+  # order events by time
+  synth.cat.df <- synth.cat.df[order(synth.cat.df$ts), ]
+  return(synth.cat.df)
+}
+```
+
+## generating first synthetic data
+
+```{r}
+beta.p <- 1 / (mean(aquila.bru$magnitudes) - M0)
+# synthetic_data_1 <- generate_synthetic_data(post.samp = horus_post_sample,
+#                                             beta.p = beta.p,
+#                                             magnitude = M0,
+#                                             start_time = T1,
+#                                             end_time = T2,
+#                                             Ht = NULL
+#                                             )
+```
+
+```{r}
+library(cluster)
+#Function to get the optimal number of clusters
+count_clusters <- function(full_data){
+  
+  data_for_clustering <- full_data[, c("ts", "magnitudes")]
+  
+  # Prepare a range of possible cluster numbers
+  k_values <- 2:10
+  
+  # Initialize an empty vector to store the within-cluster sum of squares (WCSS)
+  awss <- vector("numeric", length(k_values))
+  
+  # Calculate AWSS for each value of k
+  for (i in seq_along(k_values)) {
+    kmeans_result <- kmeans(data_for_clustering, centers = k_values[i])
+    awss[i] <- mean(kmeans_result$withinss)
+  }
+  
+  # Calculate the relative change in WSS for each value of k
+  relative_change_wss <- numeric(length(awss) - 1)
+  for (i in 2:length(awss)) {
+    relative_change_wss[i - 1] <- (awss[i - 1] - awss[i]) / awss[i - 1] * 100
+  }
+  
+  # Set the threshold for relative change in WSS to determine the optimal number of clusters
+  threshold <- 10  # You can adjust this threshold as needed
+  
+  # Plot the elbow curve
+  plot(k_values, awss, 
+       type = "b", pch = 19,
+       frame = FALSE,
+       xlab = "Number of Clusters (k)",
+       ylab = "Average Within-Cluster Sum of Squares (AWSS)")
+  
+  # Identify the optimal number of clusters based on the threshold
+  optimal_k <- k_values[which.max(relative_change_wss <= threshold)]
+  
+  # Identify the "elbow" point using some threshold (you can adjust this threshold as needed)
+  # elbow_point <- k_values[which(diff(awss) < mean(diff(awss)))[1]]
+  
+  # Print the identified optimal number of clusters
+  # cat("Optimal number of clusters:", elbow_point, "\n")
+  # return(elbow_point)
+  return (optimal_k)
+}
+```
+
+```{r}
+
+quantify_data_characteristics <- function(full_data){
+  main_earthquakes <- sum(full_data$magnitude > 4.5)
+  clusters <- count_clusters(full_data = full_data)
+  return(list(main_earthquakes = main_earthquakes,
+              clusters = clusters))
+}
+
+```
+
+```{r}
+
+# characteristics_synthetic_data_1 <- quantify_data_characteristics(full_data = 
+                                                                    # synthetic_data_1)
+```
+
+```{r}
+horus_post_estimates <- apply(horus_post_sample,2,mean)
+horus_post_estimates
+```
+
+## fitting synthetic model with the first set of priors
+
+### we impose a wrong vlaue on mu and see whether it affects the estimate of alpha
+
+```{r}
+synthetic_data_set_1_priors <- list(
+  mu = \(x) unif_t(x, 0.40096, 0.40098),
+  K = \(x) unif_t(x, 0.1355, 0.1357),
+  alpha = \(x) gamma_t(x, 0.3, 0.6),
+  c_ = \(x) unif_t(x, 0.07088, 0.07090),
+  p = \(x) unif_t(x, 1.1779, 1.1781)
+)
+```
+
+## test with first set of priors
+
+```{r}
+# Set the number of iterations
+num_iterations <- 5
+invisible({  # Loop through the iterations
+  for (i in 1:num_iterations) {
+    # Create variable names dynamically using paste
+    synthetic_data <- paste("synthetic_data_set_1_data_", i, sep = "")
+    synthetic_fit <- paste("synthetic_data_set_1_data_", i, "_fit", sep = "")
+    synthetic_input_list <- paste("synthetic_data_set_1_data_", i, "_input_list", sep = "")
+    synthetic_post_sample <- paste("synthetic_data_set_1_data_", i, "_post_sample", sep = "")
+    marg_plot <- paste("synthetic_data_set_1_data_", i, "_marg_plot", sep = "")
+    pair_plot <- paste("synthetic_data_set_1_data_", i, "_pair_plot", sep = "")
+  
+    # Perform the process for each iteration with dynamically generated variable names
+    assign(synthetic_data, generate_synthetic_data(post.samp = horus_post_sample,
+                                                       beta.p = beta.p,
+                                                       magnitude = M0,
+                                                       start_time = T1,
+                                                       end_time = T2,
+                                                       Ht = NULL))
+  
+    assign(synthetic_fit, model_fit(full_data = get(synthetic_data),
+                                              magnitude = M0,
+                                              start_time = T1,
+                                              end_time = T2,
+                                              link_functions = synthetic_data_set_1_priors,
+                                              bru_options_list = bru.opt.list))
+    
+    
+    
+    assign(synthetic_input_list, get_input_list(get(synthetic_fit),
+                                                synthetic_data_set_1_priors))
+    
+    assign(synthetic_post_sample, get_post_sample(input_list = get(synthetic_input_list)))
+    
+    assign(marg_plot, marg_posterior(input_list = get(synthetic_input_list),
+                                     var_name = synthetic_data,
+                                     num.cores = num.cores))
+    print(get(marg_plot))
+  
+    assign(pair_plot,pair_plots_plotter(post_sample = get(synthetic_post_sample),
+                                        var_name = synthetic_data))
+    print(get(pair_plot))  
+  }
+})
+```
+
+```{r}
+horus_post_estimates
+```
+
+## fitting models on second set of priors
+
+### this time we set incorrect vlaue of K
+
+```{r}
+synthetic_data_set_2_priors <- list(
+  mu = \(x) unif_t(x, 0.30103, 0.30105),
+  K = \(x) unif_t(x, 1.71, 1.72), ## set wrong
+  alpha = \(x) gamma_t(x, 0.3, 0.6),
+  c_ = \(x) unif_t(x, 0.07046, 0.07048),
+  p = \(x) unif_t(x, 1.1787, 1.1789)
+)
+
+
+invisible({  # Loop through the iterations
+  for (i in 1:num_iterations) {
+    # Create variable names dynamically using paste
+    synthetic_data <- paste("synthetic_data_set_2_data_", i, sep = "")
+    synthetic_fit <- paste("synthetic_data_set_2_data_", i, "_fit", sep = "")
+    synthetic_input_list <- paste("synthetic_data_set_2_data_", i, "_input_list", sep = "")
+    synthetic_post_sample <- paste("synthetic_data_set_2_data_", i, "_post_sample", sep = "")
+    marg_plot <- paste("synthetic_data_set_2_data_", i, "_marg_plot", sep = "")
+    pair_plot <- paste("synthetic_data_set_2_data_", i, "_pair_plot", sep = "")
+    
+    # Perform the process for each iteration with dynamically generated variable names
+    assign(synthetic_data, generate_synthetic_data(post.samp = horus_post_sample,
+                                                   beta.p = beta.p,
+                                                   magnitude = M0,
+                                                   start_time = T1,
+                                                   end_time = T2,
+                                                   Ht = NULL))
+    
+    assign(synthetic_fit, model_fit(full_data = get(synthetic_data),
+                                    magnitude = M0,
+                                    start_time = T1,
+                                    end_time = T2,
+                                    link_functions = synthetic_data_set_2_priors,
+                                    bru_options_list = bru.opt.list))
+    
+    
+    
+    assign(synthetic_input_list, get_input_list(get(synthetic_fit),
+                                                synthetic_data_set_2_priors))
+    
+    assign(synthetic_post_sample, get_post_sample(input_list = get(synthetic_input_list)))
+    
+    assign(marg_plot, marg_posterior(input_list = get(synthetic_input_list),
+                                     var_name = synthetic_data,
+                                     num.cores = num.cores))
+    print(get(marg_plot))
+    
+    assign(pair_plot,pair_plots_plotter(post_sample = get(synthetic_post_sample),
+                                        var_name = synthetic_data))
+    print(get(pair_plot))  
+  }
+})
+```
+
+```{r}
+horus_post_estimates
+```
+
+## fitting models and third set of priors
+
+### this time we will make c wrong
+```{r}
+synthetic_data_set_3_priors <- list(
+  mu = \(x) unif_t(x, 0.30103, 0.30105),
+  K = \(x) unif_t(x, 0.135, 0.137), ## set wrong
+  alpha = \(x) gamma_t(x, 0.3, 0.6),
+  c_ = \(x) unif_t(x, 1.07046, 1.07048),
+  p = \(x) unif_t(x, 1.1787, 1.1789)
+)
+
+
+invisible({  # Loop through the iterations
+  for (i in 1:num_iterations) {
+    # Create variable names dynamically using paste
+    synthetic_data <- paste("synthetic_data_set_3_data_", i, sep = "")
+    synthetic_fit <- paste("synthetic_data_set_3_data_", i, "_fit", sep = "")
+    synthetic_input_list <- paste("synthetic_data_set_3_data_", i, "_input_list", sep = "")
+    synthetic_post_sample <- paste("synthetic_data_set_3_data_", i, "_post_sample", sep = "")
+    marg_plot <- paste("synthetic_data_set_3_data_", i, "_marg_plot", sep = "")
+    pair_plot <- paste("synthetic_data_set_3_data_", i, "_pair_plot", sep = "")
+    
+    # Perform the process for each iteration with dynamically generated variable names
+    assign(synthetic_data, generate_synthetic_data(post.samp = horus_post_sample,
+                                                   beta.p = beta.p,
+                                                   magnitude = M0,
+                                                   start_time = T1,
+                                                   end_time = T2,
+                                                   Ht = NULL))
+    
+    assign(synthetic_fit, model_fit(full_data = get(synthetic_data),
+                                    magnitude = M0,
+                                    start_time = T1,
+                                    end_time = T2,
+                                    link_functions = synthetic_data_set_3_priors,
+                                    bru_options_list = bru.opt.list))
+    
+    
+    
+    assign(synthetic_input_list, get_input_list(get(synthetic_fit),
+                                                synthetic_data_set_3_priors))
+    
+    assign(synthetic_post_sample, get_post_sample(input_list = get(synthetic_input_list)))
+    
+    assign(marg_plot, marg_posterior(input_list = get(synthetic_input_list),
+                                     var_name = synthetic_data,
+                                     num.cores = num.cores))
+    print(get(marg_plot))
+    
+    assign(pair_plot,pair_plots_plotter(post_sample = get(synthetic_post_sample),
+                                        var_name = synthetic_data))
+    print(get(pair_plot))  
+  }
+})
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```

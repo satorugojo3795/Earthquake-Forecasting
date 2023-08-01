@@ -222,7 +222,6 @@ pair_plots_plotter <- function(post_sample){
 }
 ```
 
-c
 
 ```{r}
 #checking posterior marginals, getting  posterior samples and plottting pair plots
@@ -304,7 +303,9 @@ generate_synthetic_data <- function(post.samp,
   return(synth.cat.df)
 }
 ```
+
 ## generating first synthetic data
+
 ```{r}
 beta.p <- 1 / (mean(aquila.bru$magnitudes) - M0)
 synthetic_data_1 <- generate_synthetic_data(post.samp = horus_post_sample,
@@ -374,7 +375,6 @@ quantify_data_characteristics <- function(full_data){
 }
 
 ```
-                                      
 
 ```{r}
 
@@ -409,6 +409,7 @@ horus_post_estimates <- apply(horus_post_sample, 2, mean)
 ```{r}
 horus_post_estimates
 ```
+
 ### set the new priors
 
 ```{r}
@@ -449,6 +450,7 @@ pair_plots_plotter(post_sample = synthetic_data_1_post_sample)
 synthetic_data_1_post_estimates <- apply(synthetic_data_1_post_sample, 2, mean) 
 synthetic_data_1_post_estimates
 ```
+
 ```{r}
 horus_post_estimates
 ```
@@ -466,8 +468,11 @@ ggplot(df.to.plot, aes(value)) +
   facet_wrap(facets = ~distribution, scales = "free")
 
 ```
+
 ## fit second model
+
 ### generate second sample
+
 ```{r}
 synthetic_data_2 <- generate_synthetic_data(post.samp = horus_post_sample,
                                             beta.p = beta.p,
@@ -496,7 +501,9 @@ synthetic_data_2_fit <- model_fit(full_data=synthetic_data_2,
                                   link_functions = synthetic_data_2_priors,
                                   bru_options_list = bru.opt.list)
 ```
+
 ### get posteriors
+
 ```{r}
 synthetic_data_2_input_list <- get_input_list(synthetic_data_2_fit,
                                    synthetic_data_2_priors)
@@ -506,22 +513,28 @@ marg_posterior(input_list = synthetic_data_2_input_list,
 synthetic_data_2_post_sample <- get_post_sample(synthetic_data_2_input_list)
 pair_plots_plotter(post_sample = synthetic_data_2_post_sample)
 ```
+
 ### get posterior estimates
+
 ```{r}
 synthetic_data_2_post_estimates <- apply(synthetic_data_2_post_sample, 2, mean) 
 synthetic_data_2_post_estimates
 ```
+
 ```{r}
 horus_post_estimates
 ```
+
 It is observed that on fixing 3 parameters- mu, alpha and p, our model is able to closely estimate the true parameters.
 
-Now let's see which parameter leads to better estimates of 
+Now let's see which parameter leads to better estimates of
 
 ## fit the third model
+
 ### set the prior
 
 we will take the case when we know all of our parameters
+
 ```{r}
 synthetic_data_3_priors <- list(
   mu = \(x) unif_t(x, 0.30096, 0.30098),
@@ -531,7 +544,9 @@ synthetic_data_3_priors <- list(
   p = \(x) unif_t(x, 1.177008, 1.1770089)
 )
 ```
+
 ###generate the dataset
+
 ```{r}
 synthetic_data_3 <- generate_synthetic_data(post.samp = horus_post_sample,
                                             beta.p = beta.p,
@@ -541,7 +556,9 @@ synthetic_data_3 <- generate_synthetic_data(post.samp = horus_post_sample,
                                             Ht = NULL
                                             )
 ```
+
 ### fit the model
+
 ```{r}
 synthetic_data_3_fit <- model_fit(full_data=synthetic_data_3,
                                   magnitude = M0,
@@ -550,7 +567,9 @@ synthetic_data_3_fit <- model_fit(full_data=synthetic_data_3,
                                   link_functions = synthetic_data_3_priors,
                                   bru_options_list = bru.opt.list)
 ```
+
 ### get posteriors
+
 ```{r}
 #checking posterior marginals, getting  posterior samples and plotting pair plots
 synthetic_data_3_input_list <- get_input_list(synthetic_data_3_fit,
@@ -561,7 +580,9 @@ marg_posterior(input_list = synthetic_data_3_input_list,
 synthetic_data_3_post_sample <- get_post_sample(synthetic_data_3_input_list)
 pair_plots_plotter(post_sample = synthetic_data_3_post_sample)
 ```
+
 ### get posterior estimates
+
 ```{r}
 synthetic_data_3_post_estimates <- apply(synthetic_data_3_post_sample, 2, mean) 
 synthetic_data_3_post_estimates
@@ -570,13 +591,15 @@ synthetic_data_3_post_estimates
 ```{r}
 horus_post_estimates
 ```
+
 WE can clearly see that the estimate of alpha is very close to its true value
 
 ## fir fourth model
+
 this time we consider mu and alpha both to be unknown. let's see what happens
 
-
 ### set the priors
+
 ```{r}
 synthetic_data_4_priors <- list(
   mu = \(x) gamma_t(x, 0.3, 0.6),
@@ -586,7 +609,9 @@ synthetic_data_4_priors <- list(
   p = \(x) unif_t(x, 1.177008, 1.1770089)
 )
 ```
+
 ### generate the synthetic dataset
+
 ```{r}
 synthetic_data_4 <- generate_synthetic_data(post.samp = horus_post_sample,
                                             beta.p = beta.p,
@@ -596,7 +621,9 @@ synthetic_data_4 <- generate_synthetic_data(post.samp = horus_post_sample,
                                             Ht = NULL
                                             )
 ```
+
 ### fit the model
+
 ```{r}
 synthetic_data_4_fit <- model_fit(full_data=synthetic_data_4,
                                   magnitude = M0,
@@ -605,7 +632,9 @@ synthetic_data_4_fit <- model_fit(full_data=synthetic_data_4,
                                   link_functions = synthetic_data_4_priors,
                                   bru_options_list = bru.opt.list)
 ```
+
 ### get posteriors
+
 ```{r}
 #checking posterior marginals, getting  posterior samples and plotting pair plots
 synthetic_data_4_input_list <- get_input_list(synthetic_data_4_fit,
@@ -625,10 +654,13 @@ synthetic_data_4_post_estimates
 ```{r}
 horus_post_estimates
 ```
+
 we see that the posterior estimate of alpha obtained is close to its true value but the estimate of Mu not that close
 
 ## fit the fifth model
+
 Now we will take the case where p is unknown along with alpha
+
 ```{r}
 synthetic_data_5_priors <- list(
   mu = \(x) unif_t(x, 0.30096, 0.30098),
@@ -671,10 +703,13 @@ synthetic_data_5_post_estimates
 ```{r}
 horus_post_estimates
 ```
+
 This time we observe that neither alpha nor p was estimated correctly
 
 ## fit the sixth model
+
 In this model we will assume that mu and c are unknown
+
 ```{r}
 synthetic_data_6_priors <- list(
   mu = \(x) unif_t(x, 0.30096, 0.30098),
@@ -716,11 +751,13 @@ synthetic_data_6_post_estimates
 ```{r}
 horus_post_estimates
 ```
+
 The same thing happens, we get a close estimate of alpha but not of c
 
-
 ## fit the seventh model
+
 this time we will assume K and alpha to be unknown
+
 ```{r}
 synthetic_data_7_priors <- list(
   mu = \(x) unif_t(x, 0.30096, 0.30098),
@@ -758,13 +795,15 @@ pair_plots_plotter(post_sample = synthetic_data_7_post_sample)
 synthetic_data_7_post_estimates <- apply(synthetic_data_7_post_sample,2,mean) 
 synthetic_data_7_post_estimates
 ```
+
 ```{r}
 horus_post_estimates
 ```
 
-## We see that the estimate of alpha is very accurate for all cases except for the one where p is missing 
+## We see that the estimate of alpha is very accurate for all cases except for the one where p is missing
 
 ## fit the eighth model
+
 SO lets take a case where every parameter is missing except for p
 
 ```{r}
@@ -808,9 +847,11 @@ synthetic_data_8_post_estimates
 ```{r}
 horus_post_estimates
 ```
+
 We observe that even though there is only parameter known i.e p, we are still able to get good estimates of the other parameters present in our model
 
 Lets check if this would be true, if oue other estimates are missing too
+
 ```{r}
 synthetic_data_9_priors <- list(
   mu = \(x) gamma_t(x, 0.3, 0.6),
@@ -854,6 +895,51 @@ horus_post_estimates
 ```
 
 ```{r}
+synthetic_data_1_priors <- list(
+  mu = \(x) unif_t(x, 0.30096, 0.30098),
+  K = \(x) gamma_t(x, 0.3, 0.6),
+  alpha = \(x) unif_t(x, 2.4381, 2.4383),
+  c_ = \(x) gamma_t(x, 0.3, 0.6),
+  p = \(x) unif_t(x, 1, 10)
+)
+
+# Set the number of iterations
+num_iterations <- 5
+
+# Loop through the iterations
+for (i in 1:num_iterations) {
+  # Create variable names dynamically using paste
+  synthetic_data_set_1_data_name <- paste("synthetic_data_", i, sep = "")
+  synthetic_data_fit_set_1_data_name <- paste("synthetic_data_", i, "_fit", sep = "")
+  synthetic_data_input_list_set_1_data_name <- paste("synthetic_data_", i, "_input_list", sep = "")
+  synthetic_data_post_sample_set_1_data_name <- paste("synthetic_data_", i, "_post_sample", sep = "")
+  
+  # Perform the process for each iteration with dynamically generated variable names
+  assign(synthetic_data_set_1_data_name, generate_synthetic_data(post.samp = horus_post_sample,
+                                                     beta.p = beta.p,
+                                                     magnitude = M0,
+                                                     start_time = T1,
+                                                     end_time = T2,
+                                                     Ht = NULL))
+
+  assign(synthetic_data_fit_set_1_data_name, model_fit(full_data = get(synthetic_data_set_1_data_name),
+                                            magnitude = M0,
+                                            start_time = T1,
+                                            end_time = T2,
+                                            link_functions = synthetic_data_1_priors,
+                                            bru_options_list = bru.opt.list))
+
+  assign(synthetic_data_input_list_set_1_data_name, get_input_list(get(synthetic_data_fit_set_1_data_name),
+                                                        synthetic_data_1_priors))
+
+  marg_posterior(input_list = get(synthetic_data_input_list_set_1_data_name),
+                 num.cores = num.cores)
+
+  assign(synthetic_data_post_sample_set_1_data_name, get_post_sample(get(synthetic_data_input_list_set_1_data_name)))
+
+  pair_plots_plotter(post_sample = get(synthetic_data_post_sample_set_1_data_name))
+}
+
 ```
 
 ```{r}
