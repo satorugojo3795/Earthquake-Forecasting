@@ -163,7 +163,6 @@ horus_data_fit <- model_fit(full_data=aquila.bru,
 ## function to generate input list
 
 ```{r}
-
 get_input_list <- function(fitted_model,
                            link_functions)
   {
@@ -294,15 +293,16 @@ horus_input_list <- result$input_list
 ## function to generate synthetic catalogues
 
 ```{r}
-generate_synthetic_data <- function(post.samp,
-                                    beta.p,
-                                    magnitude,
-                                    start_time,
-                                    end_time,
-                                    Ht){
+generate_synthetic_data <- function(Ht = NULL,
+                                    post.samp = horus_post_sample,
+                                    beta = beta.p,
+                                    magnitude = M0,
+                                    start_time = T1,
+                                    end_time = T2
+                                    ){
   synth.cat.list <- generate_temporal_ETAS_synthetic(
   theta = post.samp[1, ], # ETAS parameters
-  beta.p = beta.p, # magnitude distribution parameter
+  beta = beta.p, # magnitude distribution parameter
   M0 = magnitude, # cutoff magnitude
   T1 = start_time, # starting time
   T2 = end_time, # end time
@@ -316,17 +316,8 @@ generate_synthetic_data <- function(post.samp,
 }
 ```
 
-## generating first synthetic data
-
 ```{r}
-beta.p <- 1 / (mean(aquila.bru$magnitudes) - M0)
-# synthetic_data_1 <- generate_synthetic_data(post.samp = horus_post_sample,
-#                                             beta.p = beta.p,
-#                                             magnitude = M0,
-#                                             start_time = T1,
-#                                             end_time = T2,
-#                                             Ht = NULL
-#                                             )
+beta.p <- 1 / (mean(aquila.bru$magnitudes - M0))                                       
 ```
 
 ```{r}
@@ -378,26 +369,100 @@ count_clusters <- function(full_data){
 ```
 
 ```{r}
-
 quantify_data_characteristics <- function(full_data){
   main_earthquakes <- sum(full_data$magnitude > 4.5)
   clusters <- count_clusters(full_data = full_data)
   return(list(main_earthquakes = main_earthquakes,
               clusters = clusters))
 }
-
 ```
 
-```{r}
-
-# characteristics_synthetic_data_1 <- quantify_data_characteristics(full_data = 
-                                                                    # synthetic_data_1)
-```
 
 ```{r}
 horus_post_estimates <- apply(horus_post_sample,2,mean)
 horus_post_estimates
 ```
+# Generate synthetic data
+
+
+Before going further we will generate 100 catalogues; 50 of these will not have any imposed events while the rest will have imposed events. We then fit an ETAS model all of these dataset and see how close are the estimates of the parameters are to the true parameters. For this we will create a dataframe $catalogues_characteristics$, where we will store the the estimates of our parameters and 
+also store the optimal number of clusters
+
+```{r}
+catalogues_characteristics <- data.frame(matrix(0, nrow = 20, ncol = 8))
+col_names <- c("Number of earthquakes",
+               "Number of large earthquakes", 
+               "Opimal number of clusters",
+               "mu",
+               "K",
+               "alpha",
+               "c",
+               "p")
+
+colnames(catalogues_characteristics) <- col_names
+
+# we impose the same event on all synthetic data sets in which we want an imposed event
+
+number_of_non_imposed_datasets <- 200
+number_of_non_imposed_datasets <- 200
+
+non_imposed_datasets <- lapply(rep(list(NULL),
+                                   number_of_non_imposed_datasets),
+                               generate_synthetic_data)
+
+imposed_datasets <- lapply(rep(list(aquila.bru[which.max(aquila.bru$magnitudes),]),
+                                   number_of_non_imposed_datasets),
+                               generate_synthetic_data)
+
+synthetic_data_all <- c(non_imposed_datasets,imposed_datasets)
+
+# store the number of observations in each data set
+num_observations <- numeric(length(synthetic_dataset_all))
+for (i in 1:length(synthetic_data_all)) {
+  num_observations[i] <- nrow(synthetic_data_all[[i]])
+}
+
+# Create a vector 'obs_class' to store the class label for each dataset
+obs_class <- cut(num_observations, breaks = c(100,150,200,250,300),
+                 labels = c("100-150", "150-200", "200-250", "250-300"),
+                 right = FALSE)
+
+selected_synthetic_datasets <- list()
+
+# Unique class labels
+unique_classes <- unique(obs_class)
+
+# selecting 5 datasets from  each class at random (stratified random sampling)
+
+datasets_per_class <- 5
+for (class_label in unique_classes) {
+  # Get the indices of datasets belonging to this class
+  class_indices <- which(obs_class == class_label)
+  
+  # Check if there are at least 5 datasets in this class
+  if (length(class_indices) >= datasets_per_class) {
+    # Randomly select 5 indices from this class
+    randomly_selected_indices <- sample(class_indices,
+                                        datasets_per_class,
+                                        replace = FALSE)
+    
+    # Add the selected datasets to the 'selected_datasets' list
+    selected_synthetic_datasets <- c(selected_synthetic_datasets, list(synthetic_data_all[randomly_selected_indices]))
+  } else {
+    # If there are less than 5 datasets in this class, just add all the datasets to the 'selected_datasets' list
+    selected_datasets <- c(selected_synthetic_datasets,
+                           list(synthetic_data_all[class_indices]))
+  }
+}
+
+
+```
+
+
+```{r}
+selected_datasets
+```
+
 
 ## fitting synthetic model with the first set of priors
 
@@ -406,10 +471,10 @@ horus_post_estimates
 ```{r}
 synthetic_data_set_1_priors <- list(
   mu = \(x) unif_t(x, 0.40096, 0.40098),
-  K = \(x) unif_t(x, 0.1355, 0.1357),
+  K = \(x) gamma_t(x, 0.3, 0.6),
   alpha = \(x) gamma_t(x, 0.3, 0.6),
-  c_ = \(x) unif_t(x, 0.07088, 0.07090),
-  p = \(x) unif_t(x, 1.1779, 1.1781)
+  c_ = \(x) gamma_t(x, 0.3, 0.6),
+  p = \(x) unif_t(x, 1, 10)
 )
 ```
 

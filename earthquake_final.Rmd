@@ -1,0 +1,519 @@
+---
+title: "earthquake_final"
+author: "Will Graham"
+date: "2023-07-24"
+output: pdf_document
+---
+
+Libraries
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ETAS.inlabru)
+library(ggplot2)
+
+num.cores <- 2
+future::plan(future::multisession, workers = num.cores)
+INLA::inla.setOption(num.threads = num.cores)
+
+```
+
+
+Need to Extract Initial Parameter Estimates from Real Data, 
+First Set Priors
+```{r}
+
+# set copula transformations list
+link.f <- list(
+  mu = \(x) gamma_t(x, 0.3, 0.6),
+  K = \(x) unif_t(x, 0, 10),
+  alpha = \(x) unif_t(x, 0, 10),
+  c_ = \(x) unif_t(x, 0, 10),
+  p = \(x) unif_t(x, 1, 10)
+)
+
+# set inverse copula transformations list
+inv.link.f <- list(
+  mu = \(x) inv_gamma_t(x, 0.3, 0.6),
+  K = \(x) inv_unif_t(x, 0, 10),
+  alpha = \(x) inv_unif_t(x, 0, 10),
+  c_ = \(x) inv_unif_t(x, 0, 10),
+  p = \(x) inv_unif_t(x, 1, 10)
+)
+
+# set up list of initial values
+th.init <- list(
+  th.mu = inv.link.f$mu(0.5),
+  th.K = inv.link.f$K(0.1),
+  th.alpha = inv.link.f$alpha(1),
+  th.c = inv.link.f$c_(0.1),
+  th.p = inv.link.f$p(1.1)
+)
+
+# set up list of bru options
+bru.opt.list <- list(
+  bru_verbose = 1, # type of visual output
+  bru_max_iter = 70, # maximum number of iterations
+  # bru_method = list(max_step = 0.5),
+  bru_initial = th.init # parameters' initial values
+)
+
+```
+
+
+Extract L'Aquila Sequence
+```{r, warning = FALSE, message=FALSE}
+
+# transform time string in Date object
+horus$time_date <- as.POSIXct(
+  horus$time_string,
+  format = "%Y-%m-%dT%H:%M:%OS"
+)
+# There may be some incorrectly registered data-times in the original data set,
+# that as.POSIXct() can't convert, depending on the system.
+# These should ideally be corrected, but for now, we just remove the rows that
+# couldn't be converted.
+horus <- na.omit(horus)
+
+# set up parameters for selection
+start.date <- as.POSIXct("2009-01-01T00:00:00", format = "%Y-%m-%dT%H:%M:%OS")
+end.date <- as.POSIXct("2010-01-01T00:00:00", format = "%Y-%m-%dT%H:%M:%OS")
+min.longitude <- 10.5
+max.longitude <- 16
+min.latitude <- 40.5
+max.latitude <- 45
+M0 <- 2.5
+
+# set up conditions for selection
+aquila.sel <- (horus$time_date >= start.date) &
+  (horus$time_date < end.date) &
+  (horus$lon >= min.longitude) &
+  (horus$lon <= max.longitude) &
+  (horus$lat >= min.latitude) &
+  (horus$lat <= max.latitude) &
+  (horus$M >= M0)
+
+# select
+aquila <- horus[aquila.sel, ]
+
+
+# set up data.frame for model fitting
+aquila.bru <- data.frame(
+  ts = as.numeric(
+    difftime(aquila$time_date, start.date, units = "days")
+  ),
+  magnitudes = aquila$M,
+  idx.p = 1:nrow(aquila)
+)
+```
+
+
+Fit an ETAS model to the real data
+```{r, warning=FALSE, message=FALSE}
+
+# set.seed(111)
+# 
+# # set starting and time of the time interval used for model fitting. In this 
+# # case, we use the interval covered by the data.
+# T1 <- 0
+# T2 <- max(aquila.bru$ts) + 0.2
+# # fit the model
+# aquila.fit <- Temporal.ETAS(
+#   total.data = aquila.bru,
+#   M0 = M0,
+#   T1 = T1,
+#   T2 = T2,
+#   link.functions = link.f,
+#   coef.t. = 1,
+#   delta.t. = 0.1,
+#   N.max. = 5,
+#   bru.opt = bru.opt.list
+# )
+
+```
+
+
+Check Real Data model fitting results
+```{r}
+
+# create input list to explore model output
+# input_list <- list(
+#   model.fit = aquila.fit,
+#   link.functions = link.f
+# )
+# 
+# # get marginal posterior information
+# post.list <- get_posterior_param(input.list = input_list)
+# 
+# # plot marginal posteriors
+# post.list$post.plot
+# 
+# # Get posterior samples from real data
+# post.samp <- post_sampling(
+#   input.list = input_list,
+#   n.samp = 1000,
+#   max.batch = 1000,
+#   ncore = 2 # default
+# )
+# 
+# # mean posterior estimates
+# post.estimates <- apply(post.samp, 2, mean)
+# print(post.estimates)
+
+```
+
+
+## Functions
+```{r, warning=FALSE, message=FALSE}
+
+# generate a time series of earthquakes with respect to the Hawkes' process
+gen.ETAS <- function(Ht=NULL, T1=0, T2=365, mu = 0.30216930, 
+                     K = 0.13821396, alpha = 2.43754785, c = 0.07019829,
+                     p = 1.17793514){
+  # the true parameters are obtained by fitting an ETAS model on real data
+  true.param <- list(mu = mu, K = K, alpha = alpha, c = c, p = p)
+  
+  M0 <- 2.5
+  beta.p <- 2.353 # 1 / mean(aquila.bru$magnitudes - M0)
+  
+  synth.cat.list <- generate_temporal_ETAS_synthetic(
+  theta = true.param,
+  beta.p = beta.p,
+  M0 = M0,
+  T1 = T1,
+  T2 = T2,
+  Ht = Ht,
+  ncore = 1
+)
+  # order events
+  synth.cat.df <- do.call(rbind, synth.cat.list)
+  
+  # prepare dataframe
+  synth.cat.df <- synth.cat.df[order(synth.cat.df$ts),]
+  
+  return(synth.cat.df)
+}  
+  
+
+# function to fit the Hawkes process parameters with synthetic data
+fit.ETAS <- function(df, T1 = 0, T2 = 365){
+  # fit synthetic data
+  fit <- Temporal.ETAS(
+    total.data <- df,
+    M0 <- 2.5,
+    T1 <- T1,
+    T2 <- T2,
+    link.functions <- link.f,
+    coef.t. <- 1,
+    delta.t. <- 0.1,
+    n.max. <- 5,
+    bru.opt = bru.opt.list
+  )
+  
+  # create input list
+  input_list <- list(
+    model.fit = fit,
+    link.functions = link.f
+  )
+  
+  # get marginal posterior information
+  post.list <- get_posterior_param(input.list = input_list)
+  
+  # Get posterior samples from real data
+  post.samp <- post_sampling(
+    input.list = input_list,
+    n.samp = 1000,
+    max.batch = 1000,
+    ncore = 2 # default
+  )
+  
+  # mean posterior estimates
+  post.estimates <- apply(post.samp, 2, mean)
+  
+  return(list(post.estimates, post.list))
+}
+  
+
+# function to quantify various characteristics
+quantify_series <- function(df, LE_cutoff = 4.5){
+  
+  # record overall number of events
+  events <- length(df[[1]])
+  
+  # record number of large events, according to the large event cutoff
+  large_events <- length(df[df[[2]] > LE_cutoff,2])
+  
+  # record average Euclidean distance between subsequent points
+  diffs <- df[2:length(df[[1]]),] - df[1:(length(df[[1]]) - 1),]
+  avg_eucl_dist <- mean(sqrt(diffs$ts^2 + diffs$magnitudes^2))
+  
+  # record inter-arrival times
+  miat <- mean(diffs$ts) # mean inter-arrival time
+  viat <- var(diffs$ts) # variance of inter-arrival times
+  lambda <- 1 / miat # estimated lambda parameter based on mean
+  expected_viat <- 1 /lambda^2 # expected variance under poisson assumption
+  disp <- viat / expected_viat # is the variance larger than expected?
+  
+  ret <- data.frame(events = events, large_events = large_events,
+                    average_euclidean_distance = avg_eucl_dist, disp = disp)
+  
+  return(ret)
+  
+}
+
+```
+
+
+Simulate Different Scenarios - which scenarios lead to accurate estimates?
+```{r, warning=FALSE, message=FALSE}
+
+#set.seed(51)
+
+# Simulate a large number of synthetic datasets, record their characteristics, 
+# and then fit the model parameters
+n <- 5 # number of catalogues per category to use
+cat <- 7 # number of categories to use
+metrics <- data.frame(matrix(0,n*cat, 9)) # storage for results
+colnames(metrics) <- c("Events", "Large Events", 
+                               "Average Euclidean Distance", "disp_measure",
+                               "mu","K","alpha","c","p")
+
+imposed_event <- aquila.bru[which.max(aquila.bru$magnitudes),] # largest event
+samples.small <- 300 # total small synthetic datasets generated
+samples.large <- 150 # total large synthetic datasets generated
+synths.small <- lapply(rep(list(NULL),samples.small), gen.ETAS)
+synths.large <- lapply(rep(list(imposed_event),samples.large), gen.ETAS)
+synths <- c(synths.small, synths.large)
+synths.reduced <- rep(list(0), n*cat) # storage for selected synthetic datasets
+
+# function to get the length of a synthetic dataset
+extract_length <- function(df){
+  return(length(df[[1]]))
+}
+
+# synthetic dataset lengths
+synth_lengths <- unlist(lapply(synths, extract_length))
+
+# it is desired to test the model fitting process on a representative sample
+# of catalogues. Take n catalogues from the following event ranges:
+# 100 - 300
+# 300 - 500
+# 500 - 700
+# 700 - 900
+# 900 - 1100
+# 1100 - 1300
+# 1300 - 2000
+
+lb <- c(100,300,500,700,900,1100,1300) # lower bounds for categories
+ub <- c(300,500,700,900,1100,1300,2000) # upper bounds for categories
+
+# select 5 random catalogues from each range
+for (i in 1:cat){
+  # find indexes of synthetic datasets that have the appropriate occurrences
+  indexes <- (synth_lengths > lb[i] & synth_lengths < ub[i])
+  
+  # subset the synthetic datasets
+  temp <- sample(synths[indexes], n)
+  synths.reduced[ ((i-1)*n + 1) : (i*n) ] <- temp # store the selected catalogues
+  
+  # extract the characteristics of the selected catalogues
+  temp2 <- unlist(lapply(temp, quantify_series))
+  temp2 <- t(matrix(temp2,4,n)) # transpose into useable format
+  
+  # store the computed characteristics
+  metrics[ ((i-1)*n + 1) : (i*n), 1:4 ] <- temp2
+
+}
+
+# free up space by removing unnecessary large datasets
+remove(synths)
+remove(synths.large)
+remove(synths.small)
+
+# compute posterior parameter estimates and plots
+post.estimates <- data.frame(matrix(0,n*cat,5)) # storage for param estimates
+post.df <- rep(list(0),n*cat) # storage for posterior plot data
+for (i in 1:(n*cat)){
+  posterior.fit <- fit.ETAS(synths.reduced[[i]]) # fit model
+  post.estimates[i,] <- posterior.fit[[1]] # store estimates
+  post.df[[i]] <- posterior.fit[[2]] # store plot data
+}
+
+# record the posterior estimates
+metrics[,5:9] <- post.estimates
+
+# save the results so that they analysis does not need to be run again
+write.csv(metrics, "metrics_vs_parameter_fits.csv")
+save(post.df, file = "post_df.RData")
+
+# function that plots the posterior densities of an input parameter (for all
+# catalogues part of a category)
+density_curves <- function(param, cat, xmin,xmax, post = post.df, n_in = n){
+  cols = c("red","blue","green","yellow","gray")
+  col_count = 1
+  for (i in  ((cat-1)*n_in + 1) : (cat*n_in)){
+    df <- post.stuff[[i]][2][[1]]$post.df
+    df <- df[df$param == param,]
+    if (i == ((cat-1)*n_in + 1)){
+      plot(df$x, df$y, type = "l", col = cols[col_count], xlim = c(xmin, xmax))
+      col_count = col_count + 1
+    } else {
+      lines(df$x, df$y, type = "l", col = cols[col_count])
+      col_count <- col_count + 1
+    }
+  }
+}
+
+# true parameter values
+true.params <- list(
+mu = 0.30216930, 
+K = 0.13821396,
+alpha = 2.43754785,
+c = 0.07019829,
+p = 1.17793514)
+
+# make new dataframe to store accuracies
+acc <- metrics
+acc[,5:9] <- (metrics[,5:9] - true.params) / true.params * 100
+
+# plot the posterior accuracies of parameters against characteristics
+plot_accuracy <- function(metric, parameter, metric_name, parameter_name,
+                          remove_outlier = FALSE){
+  
+  # remove outliers if desired
+  if (remove_outlier){
+    outlier_indexes <- abs(parameter)/mean(abs(parameter)) > 3
+    parameter <- parameter[outlier_indexes == FALSE]
+    metric <- metric[outlier_indexes == FALSE]
+  }
+  
+  colors <- rep("red", length(parameter))
+  negative_indexes <- parameter < 0
+  colors[negative_indexes] <- "blue"
+  abs_para <- abs(parameter)
+  
+  par(mar = c(5, 4, 4, 2))
+  title <- paste("Mean posterior accuracies for", parameter_name, "against\n",
+                 metric_name)
+  ylab = paste("% error for", parameter_name, "estimate")
+  plot(metric, abs_para, col = colors, pch = 16, main = title, ylab = ylab,
+       xlab = metric_name)
+  legend <- c(paste(parameter_name, "is overestimated"), 
+              paste(parameter_name, "is underestimated"))
+  legend("topright", legend = legend, pch = c(16,16), col = c("red","blue"))
+  
+}
+
+
+density_curves("alpha",1, 2,2.5)
+
+plot_accuracy(acc$Events, acc$alpha, 
+              "Events","alpha", TRUE)
+
+```
+
+
+Function to set the priors for model fitting
+```{r}
+
+# function to set priors
+set_priors <- function(mu_gamma1=0.3, mu_gamma2=0.6, K_U1=0, K_U2=10, 
+                       alpha_U1=0, alpha_U2=10, c_U1 = 0, c_U2 = 10, 
+                       p_U1 = 1, p_U2 = 10, set_mu_to_unif = FALSE,
+                       mu_init = 0.5, K_init = 0.1, alpha_init = 1, 
+                       c_init = 0.1, p_init = 1.1){
+  
+# set copula transformations list
+link.f <<- list(
+  mu = \(x) gamma_t(x, mu_gamma1, mu_gamma2),
+  K = \(x) unif_t(x, K_U1, K_U2),
+  alpha = \(x) unif_t(x, alpha_U1, alpha_U2),
+  c_ = \(x) unif_t(x, c_U1, c_U2),
+  p = \(x) unif_t(x, p_U1, p_U2)
+)
+# set inverse copula transformations list
+inv.link.f <<- list(
+  mu = \(x) inv_gamma_t(x, mu_gamma1, mu_gamma2),
+  K = \(x) inv_unif_t(x, K_U1, K_U2),
+  alpha = \(x) inv_unif_t(x, alpha_U1, alpha_U2),
+  c_ = \(x) inv_unif_t(x, c_U1, c_U2),
+  p = \(x) inv_unif_t(x, p_U1, p_U2)
+)
+
+# set up list of initial values
+th.init <<- list(
+  th.mu = inv.link.f$mu(mu_init),
+  th.K = inv.link.f$K(K_init),
+  th.alpha = inv.link.f$alpha(alpha_init),
+  th.c = inv.link.f$c_(c_init),
+  th.p = inv.link.f$p(p_init)
+)
+
+# option to set mu's prior to be uniform if it is the "mis-specified" parameter
+if (set_mu_to_unif){
+ link.f <<- list(
+  mu = \(x) unif_t(x, mu_gamma1, mu_gamma2),
+  K = \(x) unif_t(x, K_U1, K_U2),
+  alpha = \(x) unif_t(x, alpha_U1, alpha_U2),
+  c_ = \(x) unif_t(x, c_U1, c_U2),
+  p = \(x) unif_t(x, p_U1, p_U2)
+)
+# set inverse copula transformations list
+inv.link.f <<- list(
+  mu = \(x) inv_unif_t(x, mu_gamma1, mu_gamma2),
+  K = \(x) inv_unif_t(x, K_U1, K_U2),
+  alpha = \(x) inv_unif_t(x, alpha_U1, alpha_U2),
+  c_ = \(x) inv_unif_t(x, c_U1, c_U2),
+  p = \(x) inv_unif_t(x, p_U1, p_U2)
+)
+}
+
+# set up list of bru options
+bru.opt.list <<- list(
+  bru_verbose = 1, # type of visual output
+  bru_max_iter = 70, # maximum number of iterations
+  # bru_method = list(max_step = 0.5),
+  bru_initial = th.init # parameters' initial values
+)
+
+}
+
+```
+
+
+Try setting a narrow prior around the incorrect value for one parameter at a
+time while keeping non-informative priors for the other parameters. Which
+parameters need to be "correct" in order for the other estimates to be okay?
+Firstly, it is important to choose datasets where parameters can be estimated
+accurately with no mis-specified parameters. 
+
+These datasets can be identified from the previous "scenarios analysis".
+```{r}
+
+# compute the average absolute error
+acc["average absolute error"] <- apply(abs(acc[,5:9]), 1, mean)
+acc["indexes"] <- c(1:(n*cat))
+
+# find the indexes of 3 datasets with the lowest average absolute error
+ordered_by_AAE <- acc[order(acc$`average absolute error`), 10:11]
+indexes <- ordered_by_AAE[1:3,2] # pull 3 best indexes
+stable_synths <- 
+
+
+```
+
+
+```{r}
+
+# mis-specify mu to be double its original value
+set_priors(mu_gamma1 = 0.59, mu_gamma2 = 0.61, set_mu_to_unif = TRUE, 
+           mu_init = 0.6)
+
+
+```
+
+
+
+
+
+
