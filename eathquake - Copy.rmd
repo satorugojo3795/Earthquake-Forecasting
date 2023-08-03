@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(ETAS.inlabru)
 library(ggplot2)
 
+set.seed(1)
 # Increase/decrease num.cores if you have more/fewer cores on your computer.
 # future::multisession works on both Windows, MacOS, and Linux
 num.cores <- 6
@@ -367,7 +368,7 @@ count_clusters <- function(full_data){
   return (optimal_k)
 }
 ```
-
+# fucntion to get characteristics
 ```{r}
 quantify_data_characteristics <- function(full_data){
   main_earthquakes <- sum(full_data$magnitude > 4.5)
@@ -379,28 +380,22 @@ quantify_data_characteristics <- function(full_data){
 
 
 ```{r}
+# full_data = selected_synthetic_datasets
+```
+
+
+
+```{r}
 horus_post_estimates <- apply(horus_post_sample,2,mean)
 horus_post_estimates
 ```
 # Generate synthetic data
 
 
-Before going further we will generate 100 catalogues; 50 of these will not have any imposed events while the rest will have imposed events. We then fit an ETAS model all of these dataset and see how close are the estimates of the parameters are to the true parameters. For this we will create a dataframe $catalogues_characteristics$, where we will store the the estimates of our parameters and 
+Before going further we will generate 400 catalogues; 200 of these will not have any imposed events while the rest will have imposed events. We then fit an ETAS model all of these dataset and see how close are the estimates of the parameters are to the true parameters. For this we will create a dataframe $catalogues_characteristics$, where we will store the the estimates of our parameters and 
 also store the optimal number of clusters
 
 ```{r}
-catalogues_characteristics <- data.frame(matrix(0, nrow = 20, ncol = 8))
-col_names <- c("Number of earthquakes",
-               "Number of large earthquakes", 
-               "Opimal number of clusters",
-               "mu",
-               "K",
-               "alpha",
-               "c",
-               "p")
-
-colnames(catalogues_characteristics) <- col_names
-
 # we impose the same event on all synthetic data sets in which we want an imposed event
 
 number_of_non_imposed_datasets <- 200
@@ -417,23 +412,24 @@ imposed_datasets <- lapply(rep(list(aquila.bru[which.max(aquila.bru$magnitudes),
 synthetic_data_all <- c(non_imposed_datasets,imposed_datasets)
 
 # store the number of observations in each data set
-num_observations <- numeric(length(synthetic_dataset_all))
+num_observations <- numeric(length(synthetic_data_all))
 for (i in 1:length(synthetic_data_all)) {
   num_observations[i] <- nrow(synthetic_data_all[[i]])
 }
 
 # Create a vector 'obs_class' to store the class label for each dataset
-obs_class <- cut(num_observations, breaks = c(100,150,200,250,300),
-                 labels = c("100-150", "150-200", "200-250", "250-300"),
+obs_class <- cut(num_observations, breaks = c(100,150,200,250,300,350),
+                 labels = c("100-150", "150-200", "200-250", "250-300","300-350"),
                  right = FALSE)
 
 selected_synthetic_datasets <- list()
+```
 
+```{r}
 # Unique class labels
 unique_classes <- unique(obs_class)
 
 # selecting 5 datasets from  each class at random (stratified random sampling)
-
 datasets_per_class <- 5
 for (class_label in unique_classes) {
   # Get the indices of datasets belonging to this class
@@ -450,22 +446,166 @@ for (class_label in unique_classes) {
     selected_synthetic_datasets <- c(selected_synthetic_datasets, list(synthetic_data_all[randomly_selected_indices]))
   } else {
     # If there are less than 5 datasets in this class, just add all the datasets to the 'selected_datasets' list
-    selected_datasets <- c(selected_synthetic_datasets,
+    selected_synthetic_datasets <- c(selected_synthetic_datasets,
                            list(synthetic_data_all[class_indices]))
   }
 }
-
-
 ```
 
+```{r, warning=FALSE}
+#store quantifying characteristics
+
+true_num_dfs <- 20
+new_dfs <- rep(list(0),true_num_dfs)
+
+index <- 1
+for (i in 1:length(selected_synthetic_datasets)){
+  for (j in 1:length(selected_synthetic_datasets[[i]])){
+    if (length(selected_synthetic_datasets[[i]]) == 0){
+      
+    } else {
+      new_dfs[[index]] <- selected_synthetic_datasets[[i]][[j]]
+      index <- index + 1
+    }
+    
+  }
+}
+
+quantify_characteristics <- lapply(new_dfs, quantify_data_characteristics)
+
+extract_main <- function(df){
+  return(df[[1]])
+}
+extract_clusters <- function(df){
+  return(df[[2]])
+}
+
+main_earthquakes_count <- unlist(lapply(quantify_characteristics, extract_main))
+clusters <- unlist(lapply(quantify_characteristics, extract_clusters))
+```
 
 ```{r}
-selected_datasets
+earthquakes_count <- lapply(new_dfs,nrow)
+```
+
+```{r}
+catalogues_characteristics <- data.frame(matrix(0, nrow = length(new_dfs),
+                                                ncol = 8))
+col_names <- c("Number of earthquakes",
+               "Number of large earthquakes", 
+               "Opimal number of clusters",
+               "mu",
+               "K",
+               "alpha",
+               "c",
+               "p")
+
+colnames(catalogues_characteristics) <- col_names
+```
+
+```{r}
+catalogues_characteristics$`Number of earthquakes` = earthquakes_count
+catalogues_characteristics$`Opimal number of clusters` = clusters
+catalogues_characteristics$`Number of large earthquakes` = main_earthquakes_count
+```
+
+```{r message=FALSE,warning=FALSE}
+non_informative_priors <- list(
+  mu = \(x) gamma_t(x, 0.3, 0.6),
+  K = \(x) gamma_t(x, 0.3, 0.6),
+  alpha = \(x) gamma_t(x, 0.3, 0.6),
+  c_ = \(x) gamma_t(x, 0.3, 0.6),
+  p = \(x) unif_t(x, 1, 10)
+)
+mu <- c()
+K <- c()
+alpha <- c()
+c_ <- c()
+p <- c()
+for(i in 1:length(new_dfs)){
+  synthetic_fit <-  model_fit(full_data=new_dfs[[i]],
+                            magnitude = M0,
+                            start_time = T1,
+                            end_time = T2,
+                            link_functions = non_informative_priors,
+                            bru_options_list = bru.opt.list)
+  
+  synthetic_input_list <- get_input_list(synthetic_fit,
+                                         non_informative_priors)
+  
+  synthetic_post_sample <- get_post_sample(input_list = synthetic_input_list)
+  synthetic_post_estimate <- apply(synthetic_post_sample,2,mean)
+  mu<- c(mu,synthetic_post_estimate['mu'])
+  K <- c(K,synthetic_post_estimate['K'])
+  alpha <- c(alpha,synthetic_post_estimate['alpha'])
+  c_ <- c(c_,synthetic_post_estimate['c'])
+  p <- c(p,synthetic_post_estimate['p'])
+}
+```
+
+```{r}
+catalogues_characteristics$mu <- mu
+catalogues_characteristics$K <- K
+catalogues_characteristics$alpha <- alpha
+catalogues_characteristics$c <- c_
+catalogues_characteristics$p <- p
+```
+
+```{r}
+index <- c()
+for(i in 1:length(new_dfs)){
+  index <- c(index,i)
+}
+catalogues_characteristics$index <- index
+```
+# finally we will now select 5 best datasets which have the least error
+```{r}
+# Calculate the error for each column
+error_mu <- abs(catalogues_characteristics$mu - horus_post_estimates['mu'])
+error_K <- abs(catalogues_characteristics$K - horus_post_estimates['K'])
+error_alpha <- abs(catalogues_characteristics$alpha - horus_post_estimates['alpha'])
+error_c <- abs(catalogues_characteristics$c - horus_post_estimates['c'])
+error_p <- abs(catalogues_characteristics$p - horus_post_estimates['p'])
+
+# Calculate the total error by adding the errors for all columns
+total_error <- error_mu + error_K + error_alpha + error_c + error_p
+
+# Add the total_error vector as a new column "error" to the dataframe
+catalogues_characteristics$total_error <- total_error
+```
+
+```{r}
+catalogues_characteristics <- catalogues_characteristics[order(catalogues_characteristics$total_error), ]
+```
+
+```{r}
+best_dfs <- c()
+for(i in 1:5){
+  best_dfs <- c(best_dfs,new_dfs[i])
+}
+```
+
+```{r}
+best_dfs
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
+```
+
+```{r}
 ```
 
 
 ## fitting synthetic model with the first set of priors
-
 ### we impose a wrong vlaue on mu and see whether it affects the estimate of alpha
 
 ```{r}
