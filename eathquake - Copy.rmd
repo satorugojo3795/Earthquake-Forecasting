@@ -389,11 +389,10 @@ horus_post_estimates <- apply(horus_post_sample,2,mean)
 horus_post_estimates
 ```
 # Generate synthetic data
-
-
 Before going further we will generate 400 catalogues; 200 of these will not have any imposed events while the rest will have imposed events. We then fit an ETAS model all of these dataset and see how close are the estimates of the parameters are to the true parameters. For this we will create a dataframe $catalogues_characteristics$, where we will store the the estimates of our parameters and 
 also store the optimal number of clusters
 
+### define the classes
 ```{r}
 # we impose the same event on all synthetic data sets in which we want an imposed event
 
@@ -423,7 +422,7 @@ obs_class <- cut(num_observations, breaks = c(100,150,200,250,300,350),
 
 selected_synthetic_datasets <- list()
 ```
-
+### sample the datasets
 ```{r}
 # Unique class labels
 unique_classes <- unique(obs_class)
@@ -450,7 +449,7 @@ for (class_label in unique_classes) {
   }
 }
 ```
-
+### get data characteristics
 ```{r, warning=FALSE}
 #store quantifying characteristics
 
@@ -486,7 +485,7 @@ clusters <- unlist(lapply(quantify_characteristics, extract_clusters))
 ```{r}
 earthquakes_count <- lapply(new_dfs,nrow)
 ```
-
+### store in dataframe
 ```{r}
 catalogues_characteristics <- data.frame(matrix(0, nrow = length(new_dfs),
                                                 ncol = 8))
@@ -507,7 +506,7 @@ catalogues_characteristics$`Number of earthquakes` = earthquakes_count
 catalogues_characteristics$`Opimal number of clusters` = clusters
 catalogues_characteristics$`Number of large earthquakes` = main_earthquakes_count
 ```
-
+### fit models on the datasets
 ```{r message=FALSE,warning=FALSE}
 non_informative_priors <- list(
   mu = \(x) gamma_t(x, 0.3, 0.6),
@@ -557,7 +556,7 @@ for(i in 1:length(new_dfs)){
 }
 catalogues_characteristics$index <- index
 ```
-# finally we will now select 5 best datasets which have the least error
+### calculate error for each dataset
 ```{r}
 # Calculate the error for each column
 error_mu <- abs(catalogues_characteristics$mu - horus_post_estimates['mu'])
@@ -576,7 +575,7 @@ catalogues_characteristics$total_error <- total_error
 ```{r}
 catalogues_characteristics <- catalogues_characteristics[order(catalogues_characteristics$total_error), ]
 ```
-
+### select the besst 5 datasets
 ```{r}
 best_dfs <- c()
 for(i in 1:5){
@@ -598,7 +597,7 @@ ggplot(df.to.plot, aes(value)) +
   theme_bw() +
   facet_wrap(facets = ~distribution, scales = "free")
 ```
-
+## fit on non-informative priors
 ```{r}
 synthetic_data_priors <- list(
   mu = \(x) gamma_t(x, 0.5, 0.5), #set incorrectly
@@ -687,9 +686,12 @@ invisible({  # Loop through the iterations
   }
 })
 ```
+```{r}
+horus_post_estimates
+```
+## Mis-speicfying priors
 
-## fitting synthetic model with the first set of priors
-### we impose a wrong vlaue on mu and see whether it affects the estimate of alpha
+### Mu is wrong
 
 ```{r}
 synthetic_data_set_1_priors <- list(
@@ -701,7 +703,6 @@ synthetic_data_set_1_priors <- list(
 )
 ```
 
-## test with first set of priors
 
 ```{r warning=FALSE message=FALSE}
 # Set the number of iterations
@@ -785,10 +786,7 @@ invisible({  # Loop through the iterations
 ```{r}
 horus_post_estimates
 ```
-
-## fitting models on second set of priors
-### this time we set incorrect vlaue of K
-
+### K is wrong
 ```{r warning=FALSE,message=FALSE}
 synthetic_data_set_2_priors <- list(
   mu = \(x) gamma_t(x, 0.5, 0.5),
@@ -799,7 +797,6 @@ synthetic_data_set_2_priors <- list(
 )
 ```
 
-## test with first set of priors
 
 ```{r warning=FALSE message=FALSE}
 invisible({  # Loop through the iterations
@@ -877,7 +874,7 @@ invisible({  # Loop through the iterations
   }
 })
 ```
-Now we will set alpha incorrectly 
+### Alpha is wrong
 ```{r message=FALSE,warning=FALSE}
 synthetic_data_set_3_priors <- list(
   mu = \(x) gamma_t(x, 0.5, 0.5),
@@ -964,13 +961,13 @@ invisible({  # Loop through the iterations
   }
 })
 ```
-
+### C is wonrg
 ```{r}
 synthetic_data_set_4_priors <- list(
   mu = \(x) gamma_t(x, 0.5, 0.5),
-  K = \(x) gamma_t(x, 0.5, 0.5), ## set wrong
+  K = \(x) gamma_t(x, 0.5, 0.5), 
   alpha = \(x) gamma_t(x, 0.5, 0.5),
-  c_ = \(x) unif_t(x, 1.5, 1.51),
+  c_ = \(x) unif_t(x, 1.5, 1.51), ## set wrong
   p = \(x) gamma_t(x, 0.5, 0.5)
 )
 
@@ -1051,14 +1048,14 @@ invisible({  # Loop through the iterations
   }
 })
 ```
-
+### P is set wrong
 ```{r}
 synthetic_data_set_5_priors <- list(
   mu = \(x) gamma_t(x, 0.5, 0.5),
   K = \(x) gamma_t(x, 0.5, 0.5), 
-  alpha = \(x) gamma_t(x, 0.5, 0.5), ## set wrong
+  alpha = \(x) gamma_t(x, 0.5, 0.5), 
   c_ = \(x) gamma_t(x, 0.5, 0.5),
-  p = \(x) unif_t(x, 2.5, 2.51)
+  p = \(x) unif_t(x, 2.5, 2.51) ## set wrong
 )
 
 # Set the number of iterations
@@ -1152,6 +1149,156 @@ invisible({
                      var_name = "horus data")
   print(pair_plot)
 })
+```
+
+```{r}
+```# Time between events distribution
+```{r}
+library(dplyr)
+aquila.bru.copy <- aquila.bru %>%
+  mutate(consecutive_difference = c(first(ts),diff(ts)))
+```
+
+```{r}
+library(ggplot2)
+
+# Calculate the ECDF of the "consecutive difference" column
+ecdf_values <- ecdf(aquila.bru.copy$consecutive_difference)
+
+# Plot the ECDF
+ggplot(data = aquila.bru.copy, aes(x = consecutive_difference)) +
+  stat_ecdf() +
+  xlab("Consecutive Difference") +
+  ylab("ECDF") +
+  ggtitle("ECDF of Consecutive Difference Column")
+```
+
+```{r}
+plot_cdf <- function(full_data,
+                     data_name){
+  # Calculate the ECDF of the "consecutive difference" column
+  ecdf_values <- ecdf(full_data$consecutive_difference)
+  
+  # Plot the ECDF
+  ggplot(data = full_data, aes(x = consecutive_difference)) +
+    stat_ecdf() +
+    xlab("Consecutive Difference") +
+    ylab("ECDF") +
+    ggtitle(paste("ECDF of consecutive difference for", data_name))
+}
+```
+
+```{r}
+best_dfs_copy <- best_dfs
+# Assuming best_dfs_copy is your list of dataframes
+best_dfs_copy<- lapply(best_dfs_copy, function(df) {
+  df %>%
+    mutate(consecutive_difference = c(first(ts), diff(ts)))
+})
+```
+
+```{r}
+plot_cdf(full_data = aquila.bru.copy,
+         data_name = "HORUS data")
+```
+
+```{r}
+library(gridExtra)
+# Apply the plot_cdf function to each dataframe in best_dfs_copy
+plots <- lapply(seq_along(best_dfs_copy), function(i) {
+  df <- best_dfs_copy[[i]]
+  data_name <- paste("synthetic data", i)
+  plot_cdf(full_data = df, data_name = data_name)
+})
+
+# Arrange the plots as subplots
+grid.arrange(grobs = plots, ncol = 2, width = 20, height = 10)  # Adjust width and height as needed
+```
+
+```{r}
+plot_cdf(full_data = best_dfs_copy[[1]],
+         data_name = "synthetic dataset 1")
+
+```
+
+```{r}
+# Plot ECDF for aquila.bru.copy
+plot_aquila_bru <- plot_cdf(aquila.bru.copy, data_name = "aquila.bru.copy")
+
+# Plot ECDF for each dataset in best_dfs_copy
+plot_best_dfs <- lapply(seq_along(best_dfs_copy), function(i) {
+  df <- best_dfs_copy[[i]]
+  data_name <- paste("Dataset", i)
+  plot_cdf(full_data = df, data_name = data_name)
+})
+
+# Combine all plots using patchwork
+library(patchwork)
+all_plots <- plot_aquila_bru + wrap_plots(plot_best_dfs, ncol = 2)
+
+# Display the combined plot
+print(all_plots)
+```
+
+```{r}
+library(ggplot2)
+
+# Combine the datasets for plotting
+all_datasets <- c(list(aquila.bru.copy), best_dfs_copy)
+all_names <- c("aquila.bru.copy", sapply(seq_along(best_dfs_copy), function(i) paste("Dataset", i)))
+
+# Combine data frames and names into a single data frame
+combined_data <- do.call(rbind, all_datasets)
+combined_data$name <- rep(all_names, sapply(all_datasets, nrow))
+
+# Plot the ECDFs
+ggplot(data = combined_data, aes(x = consecutive_difference, color = name)) +
+  stat_ecdf() +
+  xlab("Consecutive Difference") +
+  ylab("ECDF") +
+  ggtitle("ECDF of Consecutive Difference Column") +
+  scale_color_discrete(name = "Dataset")
+```
+
+```{r}
+library(ggplot2)
+
+# Define the plot_cdf function
+plot_cdf <- function(full_data, data_name) {
+  # Calculate the ECDF of the "consecutive difference" column
+  ecdf_values <- ecdf(full_data$consecutive_difference)
+  
+  # Plot the ECDF
+  ggplot(data = full_data, aes(x = consecutive_difference)) +
+    stat_ecdf() +
+    xlab("Consecutive Difference") +
+    ylab("ECDF") +
+    ggtitle(paste("ECDF of consecutive difference for", data_name))
+}
+
+# Combine the datasets for plotting
+all_datasets <- c(list(aquila.bru.copy), best_dfs_copy)
+all_names <- c("aquila.bru.copy", sapply(seq_along(best_dfs_copy), function(i) paste(" Synthetic Dataset", i)))
+
+# Make sure all datasets have the same column names
+column_names <- colnames(all_datasets[[1]])
+all_datasets <- lapply(all_datasets, function(df) {
+  colnames(df) <- column_names
+  return(df)
+})
+
+# Combine data frames and names into a single data frame
+combined_data <- do.call(rbind, all_datasets)
+combined_data$name <- rep(all_names, sapply(all_datasets, nrow))
+
+# Plot the ECDFs
+ggplot(data = combined_data, aes(x = consecutive_difference, color = name)) +
+  stat_ecdf() +
+  xlab("Consecutive Difference") +
+  ylab("ECDF") +
+  ggtitle("ECDF of Consecutive Difference Column") +
+  scale_color_discrete(name = "Dataset")
+
 ```
 
 ```{r}
