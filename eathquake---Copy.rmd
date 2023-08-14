@@ -1,17 +1,34 @@
 ---
-title: "Earthquake"
+title: "Earthquake forecasting"
 author: "Saksham"
 date: "2023-08-01"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+# Import Libraries
+
+```{r message=FALSE,warning=FALSE}
 library(ETAS.inlabru)
 library(ggplot2)
+library(rnaturalearth)
+library(terra)
+library(sf)
+library(ggspatial)
+library(rnaturalearthdata)
+library(dplyr)
+library(lubridate)
+library(gridExtra)
+library(patchwork)
+
+
+## This is just the EPSG equivalent of WGS84
+crs_wgs84 <- st_crs('EPSG:4326')
 
 set.seed(1)
 # Increase/decrease num.cores if you have more/fewer cores on your computer.
@@ -24,9 +41,87 @@ INLA::inla.setOption(num.threads = num.cores)
 #   INLA::inla.setOption(num.threads = 1)
 ```
 
+# Exploratory data analysis
+
+## Get the data ready
+
+```{r message=FALSE,warning=FALSE}
+data(horus, package = "ETAS.inlabru")
+
+# transform time string in Date object
+horus$time_date <- as.POSIXct(
+  horus$time_string,
+  format = "%Y-%m-%dT%H:%M:%OS"
+)
+
+head(horus)
+```
+
+```{r message=FALSE,warning=FALSE}
+# Set df_cat to be the catalogue we want to analyse and then use this below
+df_cat <- horus
+
+# Add an integer id to each event
+df_cat$event_num <- seq.int(nrow(df_cat))
+
+# Generate an sf version of the catalogue where the longitude and latitude are converted to a point object
+df_cat.sf<- st_as_sf(df_cat,
+                     coords = c("lon", "lat"),
+                     crs = crs_wgs84)
+
+head(df_cat.sf)
+```
+
+## Histogram of the depth of events
+
+```{r message=FALSE,warning=FALSE}
+hist(df_cat$depth, breaks=seq(650,-5,-1), xlim=c(-5,40), main="Histogram of depths, 1km bins", xlab="Depth [km]")
+```
+
+## Plot the number of events per year
+
+```{r message=FALSE,warning=FALSE}
+df_cat$Time <- as.Date(df_cat$time_date)
+ 
+print("Extract year")
+# extract the year and convert to numeric format
+df_cat$Year <- as.numeric(format(df_cat$Time, "%Y"))
+
+countEventsInYear <- df_cat %>%
+  group_by(Year) %>%
+  summarize(counts = n())
+
+plot(countEventsInYear, type="l", main="Annual number of events for whole catalogue")
+```
+
+```{r message=FALSE,warning=FALSE}
+countEventsInYear <- df_cat[df_cat$M>=4.5,] %>%
+  group_by(Year) %>%
+  summarize(counts = n())
+
+plot(countEventsInYear, type="l", main="Annual number of events with M>=4.5")
+abline(h=mean(countEventsInYear), col=2)
+```
+
+```{r message=FALSE,warning=FALSE}
+italy.map <- ne_countries(country = 'Italy', returnclass = "sf", scale = 'medium')
+italy.crs <- crs(italy.map)
+```
+
+```{r message=FALSE,warning=FALSE}
+ggplot() +
+  geom_sf(data = df_cat.sf[df_cat$M>3,], size = 0.05) +
+  geom_sf(data = italy.map, fill=alpha("lightgrey", 0), color = 'green', linewidth=0.7) +
+  geom_sf(data = df_cat.sf[df_cat$M>5,], size = 0.5, color='orange') +
+  geom_sf(data = df_cat.sf[df_cat$M>6,], size = 0.5, color='red') +
+  ggtitle("Map of event locations")
+```
+
+# Predicting earthquakes
+
 ## Set up the transformations
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 # set copula transformations list
 link.f <- list(
   mu = \(x) gamma_t(x, 0.3, 0.6),
@@ -48,7 +143,7 @@ inv.link.f <- list(
 
 ## Data Preprocessing
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 # transform time string in Date object
 horus$time_date <- as.POSIXct(
   horus$time_string,
@@ -82,13 +177,13 @@ aquila.sel <- (horus$time_date >= start.date) &
 aquila <- horus[aquila.sel, ]
 ```
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 ggplot(aquila, aes(time_date, M)) +
   geom_point() +
   theme_bw()
 ```
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 # set up data.frame for model fitting
 aquila.bru <- data.frame(
   ts = as.numeric(
@@ -101,7 +196,7 @@ aquila.bru <- data.frame(
 
 ## set up the initial values
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 # set up list of initial values
 th.init <- list(
   th.mu = inv.link.f$mu(0.5),
@@ -114,7 +209,7 @@ th.init <- list(
 
 ## set the list of inlabru options
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 # set up list of bru options
 bru.opt.list <- list(
   bru_verbose = 3, # type of visual output
@@ -126,7 +221,7 @@ bru.opt.list <- list(
 
 ## function to fit the model
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 model_fit <- function(full_data,
                       magnitude,
                       start_time,
@@ -150,7 +245,8 @@ model_fit <- function(full_data,
 
 ### fit the model
 
-```{r}
+```{r message=FALSE,warning=FALSE}
+
 T1 <- 0
 T2 <- max(aquila.bru$ts) + 0.2 # Use max(..., na.rm = TRUE) if there may still be NAs here
 horus_data_fit <- model_fit(full_data=aquila.bru,
@@ -163,7 +259,8 @@ horus_data_fit <- model_fit(full_data=aquila.bru,
 
 ## function to generate input list
 
-```{r}
+```{r message=FALSE,warning=FALSE}
+
 get_input_list <- function(fitted_model,
                            link_functions)
   {
@@ -181,7 +278,7 @@ horus_input_list <- get_input_list(horus_data_fit,
 
 ##function to check posterior marginal distributions
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 marg_posterior <- function(input_list,
                            var_name,
                            num.cores){
@@ -206,7 +303,7 @@ marg_posterior <- function(input_list,
 
 ## function to get a posterior sample
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 get_post_sample <- function(input_list){
   #now get a posterior sample
   post.samp <- post_sampling(
@@ -221,7 +318,7 @@ get_post_sample <- function(input_list){
 
 ## function to plot pair plots
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 pair_plots_plotter <- function(post_sample,
                                var_name){
   pair.plot <- post_pairs_plot(
@@ -244,7 +341,7 @@ pair_plots_plotter <- function(post_sample,
 }
 ```
 
-```{r warning=FALSE, message=FALSE}
+```{r message=FALSE,warning=FALSE}
 #checking posterior marginals, getting  posterior samples and plottting pair plots
 invisible({
   marg_plot <- marg_posterior(input_list = horus_input_list,
@@ -262,7 +359,7 @@ invisible({
 
 ## function to check posterior number of events
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 check_posterior_events <- function(input_list,
                                    full_data,
                                    start_time,
@@ -279,7 +376,7 @@ check_posterior_events <- function(input_list,
 }
 ```
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 result <- check_posterior_events(input_list = horus_input_list,
                                  full_data = aquila.bru,
                                  start_time = T1,
@@ -292,7 +389,7 @@ horus_input_list <- result$input_list
 
 ## function to generate synthetic catalogues
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 generate_synthetic_data <- function(Ht = NULL,
                                     post.samp = horus_post_sample,
                                     beta = beta.p,
@@ -316,11 +413,11 @@ generate_synthetic_data <- function(Ht = NULL,
 }
 ```
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 beta.p <- 1 / (mean(aquila.bru$magnitudes - M0))                                       
 ```
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 library(cluster)
 #Function to get the optimal number of clusters
 count_clusters <- function(full_data){
@@ -367,8 +464,10 @@ count_clusters <- function(full_data){
   return (optimal_k)
 }
 ```
-# fucntion to get characteristics
-```{r}
+
+# function to get characteristics
+
+```{r message=FALSE,warning=FALSE}
 quantify_data_characteristics <- function(full_data){
   main_earthquakes <- sum(full_data$magnitude > 4.5)
   clusters <- count_clusters(full_data = full_data)
@@ -377,23 +476,22 @@ quantify_data_characteristics <- function(full_data){
 }
 ```
 
-
-```{r}
+```{r message=FALSE,warning=FALSE}
 # full_data = selected_synthetic_datasets
 ```
 
-
-
-```{r}
+```{r message=FALSE,warning=FALSE}
 horus_post_estimates <- apply(horus_post_sample,2,mean)
 horus_post_estimates
 ```
+
 # Generate synthetic data
-Before going further we will generate 400 catalogues; 200 of these will not have any imposed events while the rest will have imposed events. We then fit an ETAS model all of these dataset and see how close are the estimates of the parameters are to the true parameters. For this we will create a dataframe $catalogues_characteristics$, where we will store the the estimates of our parameters and 
-also store the optimal number of clusters
+
+Before going further we will generate 400 catalogues; 200 of these will not have any imposed events while the rest will have imposed events. We then fit an ETAS model all of these dataset and see how close are the estimates of the parameters are to the true parameters. For this we will create a dataframe $catalogues_characteristics$, where we will store the the estimates of our parameters and also store the optimal number of clusters
 
 ### define the classes
-```{r}
+
+```{r message=FALSE,warning=FALSE}
 # we impose the same event on all synthetic data sets in which we want an imposed event
 
 number_of_non_imposed_datasets <- 200
@@ -422,8 +520,10 @@ obs_class <- cut(num_observations, breaks = c(100,150,200,250,300,350),
 
 selected_synthetic_datasets <- list()
 ```
+
 ### sample the datasets
-```{r}
+
+```{r message=FALSE,warning=FALSE}
 # Unique class labels
 unique_classes <- unique(obs_class)
 
@@ -449,8 +549,10 @@ for (class_label in unique_classes) {
   }
 }
 ```
+
 ### get data characteristics
-```{r, warning=FALSE}
+
+```{r message=FALSE,warning=FALSE}
 #store quantifying characteristics
 
 true_num_dfs <- 20
@@ -482,11 +584,13 @@ main_earthquakes_count <- unlist(lapply(quantify_characteristics, extract_main))
 clusters <- unlist(lapply(quantify_characteristics, extract_clusters))
 ```
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 earthquakes_count <- lapply(new_dfs,nrow)
 ```
+
 ### store in dataframe
-```{r}
+
+```{r message=FALSE,warning=FALSE}
 catalogues_characteristics <- data.frame(matrix(0, nrow = length(new_dfs),
                                                 ncol = 8))
 col_names <- c("Number of earthquakes",
@@ -501,12 +605,14 @@ col_names <- c("Number of earthquakes",
 colnames(catalogues_characteristics) <- col_names
 ```
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 catalogues_characteristics$`Number of earthquakes` = earthquakes_count
 catalogues_characteristics$`Opimal number of clusters` = clusters
 catalogues_characteristics$`Number of large earthquakes` = main_earthquakes_count
 ```
+
 ### fit models on the datasets
+
 ```{r message=FALSE,warning=FALSE}
 non_informative_priors <- list(
   mu = \(x) gamma_t(x, 0.3, 0.6),
@@ -541,7 +647,7 @@ for(i in 1:length(new_dfs)){
 }
 ```
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 catalogues_characteristics$mu <- mu
 catalogues_characteristics$K <- K
 catalogues_characteristics$alpha <- alpha
@@ -549,15 +655,17 @@ catalogues_characteristics$c <- c_
 catalogues_characteristics$p <- p
 ```
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 index <- c()
 for(i in 1:length(new_dfs)){
   index <- c(index,i)
 }
 catalogues_characteristics$index <- index
 ```
+
 ### calculate error for each dataset
-```{r}
+
+```{r message=FALSE,warning=FALSE}
 # Calculate the error for each column
 error_mu <- abs(catalogues_characteristics$mu - horus_post_estimates['mu'])
 error_K <- abs(catalogues_characteristics$K - horus_post_estimates['K'])
@@ -572,21 +680,21 @@ total_error <- error_mu + error_K + error_alpha + error_c + error_p
 catalogues_characteristics$total_error <- total_error
 ```
 
-```{r}
+```{r message=FALSE,warning=FALSE}
+
 catalogues_characteristics <- catalogues_characteristics[order(catalogues_characteristics$total_error), ]
 ```
+
 ### select the besst 5 datasets
-```{r}
+
+```{r message=FALSE,warning=FALSE}
 best_dfs <- c()
 for(i in 1:5){
   best_dfs <- c(best_dfs,new_dfs[i])
 }
 ```
 
-```{r}
-best_dfs
-```
-```{r}
+```{r message=FALSE,warning=FALSE}
 X <- rnorm(1000)
 # apply copula transformations
 gamma.X <- gamma_t(X, 0.5,0.5)
@@ -597,8 +705,10 @@ ggplot(df.to.plot, aes(value)) +
   theme_bw() +
   facet_wrap(facets = ~distribution, scales = "free")
 ```
+
 ## fit on non-informative priors
-```{r}
+
+```{r message=FALSE,warning=FALSE}
 synthetic_data_priors <- list(
   mu = \(x) gamma_t(x, 0.5, 0.5), #set incorrectly
   K = \(x) gamma_t(x, 0.5, 0.5), #unknown
@@ -608,7 +718,7 @@ synthetic_data_priors <- list(
 )
 ```
 
-```{r warning=FALSE,message=FALSE}
+```{r message=FALSE,warning=FALSE}
 # Set the number of iterations
 num_iterations <- 5
 invisible({  # Loop through the iterations
@@ -686,14 +796,16 @@ invisible({  # Loop through the iterations
   }
 })
 ```
-```{r}
+
+```{r message=FALSE,warning=FALSE}
 horus_post_estimates
 ```
+
 ## Mis-speicfying priors
 
 ### Mu is wrong
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 synthetic_data_set_1_priors <- list(
   mu = \(x) unif_t(x, 0.40096, 0.40098), #set incorrectly
   K = \(x) gamma_t(x, 0.5, 0.5), #unknown
@@ -703,8 +815,7 @@ synthetic_data_set_1_priors <- list(
 )
 ```
 
-
-```{r warning=FALSE message=FALSE}
+```{r message=FALSE,warning=FALSE}
 # Set the number of iterations
 num_iterations <- 5
 invisible({  # Loop through the iterations
@@ -783,11 +894,13 @@ invisible({  # Loop through the iterations
 })
 ```
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 horus_post_estimates
 ```
+
 ### K is wrong
-```{r warning=FALSE,message=FALSE}
+
+```{r message=FALSE,warning=FALSE}
 synthetic_data_set_2_priors <- list(
   mu = \(x) gamma_t(x, 0.5, 0.5),
   K = \(x) unif_t(x, 1.71, 1.72), ## set wrong
@@ -797,8 +910,7 @@ synthetic_data_set_2_priors <- list(
 )
 ```
 
-
-```{r warning=FALSE message=FALSE}
+```{r message=FALSE,warning=FALSE}
 invisible({  # Loop through the iterations
   for (i in 1:length(best_dfs)) {
     # Create variable names dynamically using paste
@@ -874,7 +986,9 @@ invisible({  # Loop through the iterations
   }
 })
 ```
+
 ### Alpha is wrong
+
 ```{r message=FALSE,warning=FALSE}
 synthetic_data_set_3_priors <- list(
   mu = \(x) gamma_t(x, 0.5, 0.5),
@@ -961,8 +1075,10 @@ invisible({  # Loop through the iterations
   }
 })
 ```
-### C is wonrg
-```{r}
+
+### C is wrong
+
+```{r message=FALSE,warning=FALSE}
 synthetic_data_set_4_priors <- list(
   mu = \(x) gamma_t(x, 0.5, 0.5),
   K = \(x) gamma_t(x, 0.5, 0.5), 
@@ -1048,8 +1164,10 @@ invisible({  # Loop through the iterations
   }
 })
 ```
+
 ### P is set wrong
-```{r}
+
+```{r message=FALSE,warning=FALSE}
 synthetic_data_set_5_priors <- list(
   mu = \(x) gamma_t(x, 0.5, 0.5),
   K = \(x) gamma_t(x, 0.5, 0.5), 
@@ -1136,7 +1254,7 @@ invisible({  # Loop through the iterations
 })
 ```
 
-```{r}
+```{r message=FALSE,warning=FALSE}
 invisible({
   marg_plot <- marg_posterior(input_list = horus_input_list,
                              var_name = "horus data",
@@ -1151,118 +1269,20 @@ invisible({
 })
 ```
 
-```{r}
-```# Time between events distribution
-```{r}
-library(dplyr)
-aquila.bru.copy <- aquila.bru %>%
-  mutate(consecutive_difference = c(first(ts),diff(ts)))
-```
+# Time between events
 
 ```{r}
-library(ggplot2)
-
-# Calculate the ECDF of the "consecutive difference" column
-ecdf_values <- ecdf(aquila.bru.copy$consecutive_difference)
-
-# Plot the ECDF
-ggplot(data = aquila.bru.copy, aes(x = consecutive_difference)) +
-  stat_ecdf() +
-  xlab("Consecutive Difference") +
-  ylab("ECDF") +
-  ggtitle("ECDF of Consecutive Difference Column")
-```
-
-```{r}
-plot_cdf <- function(full_data,
-                     data_name){
-  # Calculate the ECDF of the "consecutive difference" column
-  ecdf_values <- ecdf(full_data$consecutive_difference)
-  
-  # Plot the ECDF
-  ggplot(data = full_data, aes(x = consecutive_difference)) +
-    stat_ecdf() +
-    xlab("Consecutive Difference") +
-    ylab("ECDF") +
-    ggtitle(paste("ECDF of consecutive difference for", data_name))
-}
-```
-
-```{r}
+aquila.bru.copy <- aquila.bru
+aquila.bru.copy <- aquila.bru.copy %>%
+  mutate(consecutive_difference = c(first(ts), diff(ts)))
 best_dfs_copy <- best_dfs
-# Assuming best_dfs_copy is your list of dataframes
-best_dfs_copy<- lapply(best_dfs_copy, function(df) {
+best_dfs_copy <- lapply(best_dfs_copy, function(df) {
   df %>%
     mutate(consecutive_difference = c(first(ts), diff(ts)))
 })
 ```
 
-```{r}
-plot_cdf(full_data = aquila.bru.copy,
-         data_name = "HORUS data")
-```
-
-```{r}
-library(gridExtra)
-# Apply the plot_cdf function to each dataframe in best_dfs_copy
-plots <- lapply(seq_along(best_dfs_copy), function(i) {
-  df <- best_dfs_copy[[i]]
-  data_name <- paste("synthetic data", i)
-  plot_cdf(full_data = df, data_name = data_name)
-})
-
-# Arrange the plots as subplots
-grid.arrange(grobs = plots, ncol = 2, width = 20, height = 10)  # Adjust width and height as needed
-```
-
-```{r}
-plot_cdf(full_data = best_dfs_copy[[1]],
-         data_name = "synthetic dataset 1")
-
-```
-
-```{r}
-# Plot ECDF for aquila.bru.copy
-plot_aquila_bru <- plot_cdf(aquila.bru.copy, data_name = "aquila.bru.copy")
-
-# Plot ECDF for each dataset in best_dfs_copy
-plot_best_dfs <- lapply(seq_along(best_dfs_copy), function(i) {
-  df <- best_dfs_copy[[i]]
-  data_name <- paste("Dataset", i)
-  plot_cdf(full_data = df, data_name = data_name)
-})
-
-# Combine all plots using patchwork
-library(patchwork)
-all_plots <- plot_aquila_bru + wrap_plots(plot_best_dfs, ncol = 2)
-
-# Display the combined plot
-print(all_plots)
-```
-
-```{r}
-library(ggplot2)
-
-# Combine the datasets for plotting
-all_datasets <- c(list(aquila.bru.copy), best_dfs_copy)
-all_names <- c("aquila.bru.copy", sapply(seq_along(best_dfs_copy), function(i) paste("Dataset", i)))
-
-# Combine data frames and names into a single data frame
-combined_data <- do.call(rbind, all_datasets)
-combined_data$name <- rep(all_names, sapply(all_datasets, nrow))
-
-# Plot the ECDFs
-ggplot(data = combined_data, aes(x = consecutive_difference, color = name)) +
-  stat_ecdf() +
-  xlab("Consecutive Difference") +
-  ylab("ECDF") +
-  ggtitle("ECDF of Consecutive Difference Column") +
-  scale_color_discrete(name = "Dataset")
-```
-
-```{r}
-library(ggplot2)
-
+```{r message=FALSE,warning=FALSE}
 # Define the plot_cdf function
 plot_cdf <- function(full_data, data_name) {
   # Calculate the ECDF of the "consecutive difference" column
@@ -1301,13 +1321,127 @@ ggplot(data = combined_data, aes(x = consecutive_difference, color = name)) +
 
 ```
 
-```{r}
+```{r message=FALSE,warning=FALSE}
+horus_post_estimates
 ```
 
-```{r}
+# Parameter differences
+
+```{r message=FALSE,warning=FALSE}
+# synthetic_data <- generate_synthetic_data()
+fit_model_1 <- model_fit(full_data = aquila.bru,
+                         magnitude = M0,
+                         start_time = T1,
+                         end_time = T2,
+                         link_functions = non_informative_priors,
+                         bru_options_list = bru.opt.list)
 ```
 
-```{r}
+```{r message=FALSE,warning=FALSE}
+input_list_1 <- get_input_list(fitted_model = fit_model_1,
+                               link_functions = non_informative_priors)
+
+post_sample_1 <- get_post_sample(input_list = input_list_1)
+marg_plot_1 <- marg_posterior(input_list = input_list_1,
+                              var_name = "horus data",
+                              num.cores = num.cores)
+print(marg_plot_1)
+pair_plot_1 <- pair_plots_plotter(post_sample = post_sample_1,
+                                  var_name = "horus data")
+print(pair_plot_1)
+
+```
+
+```{r message=FALSE,warning=FALSE}
+synthetic_data_1 <- generate_synthetic_data(post.samp = post_sample_1)
+fit_model_2 <- model_fit(full_data = synthetic_data_1,
+                         magnitude = M0,
+                         start_time = T1,
+                         end_time = T2,
+                         link_functions = non_informative_priors,
+                         bru_options_list = bru.opt.list)
+```
+
+```{r message=FALSE,warning=FALSE}
+input_list_2 <- get_input_list(fitted_model = fit_model_2,
+                               link_functions = non_informative_priors)
+
+post_sample_2 <- get_post_sample(input_list = input_list_2)
+marg_plot_2 <- marg_posterior(input_list = input_list_2,
+                              var_name = "synthetic_data 1",
+                              num.cores = num.cores)
+print(marg_plot_2)
+pair_plot_2 <- pair_plots_plotter(post_sample = post_sample_2,
+                                  var_name = "synthetic_data 1")
+print(pair_plot_2)
+```
+
+```{r message=FALSE,warning=FALSE}
+post_estimates_2 <- apply(post_sample_2,2,mean)
+post_estimates_2
+```
+
+```{r message=FALSE,warning=FALSE}
+synthetic_data_2 <- generate_synthetic_data(post.samp = post_sample_2)
+fit_model_3 <- model_fit(full_data = synthetic_data_2,
+                         magnitude = M0,
+                         start_time = T1,
+                         end_time = T2,
+                         link_functions = non_informative_priors,
+                         bru_options_list = bru.opt.list)
+
+```
+
+```{r message=FALSE,warning=FALSE}
+input_list_3 <- get_input_list(fitted_model = fit_model_3,
+                               link_functions = non_informative_priors)
+
+post_sample_3 <- get_post_sample(input_list = input_list_3)
+marg_plot_3 <- marg_posterior(input_list = input_list_3,
+                              var_name = "horus data",
+                              num.cores = num.cores)
+print(marg_plot_3)
+pair_plot_3 <- pair_plots_plotter(post_sample = post_sample_3,
+                                  var_name = "horus data")
+print(pair_plot_3)
+```
+
+```{r message=FALSE,warning=FALSE}
+post_estimates_3 <- apply(post_sample_3,2,mean)
+post_estimates_3
+```
+
+```{r message=FALSE,warning=FALSE}
+horus_post_estimates
+```
+
+```{r message=FALSE,warning=FALSE}
+synthetic_data_3 <- generate_synthetic_data(post.samp = post_sample_3)
+fit_model_4 <- model_fit(full_data = synthetic_data_3,
+                         magnitude = M0,
+                         start_time = T1,
+                         end_time = T2,
+                         link_functions = non_informative_priors,
+                         bru_options_list = bru.opt.list)
+```
+
+```{r message=FALSE,warning=FALSE}
+input_list_4 <- get_input_list(fitted_model = fit_model_4,
+                               link_functions = non_informative_priors)
+
+post_sample_4 <- get_post_sample(input_list = input_list_4)
+marg_plot_4 <- marg_posterior(input_list = input_list_4,
+                              var_name = "horus data",
+                              num.cores = num.cores)
+print(marg_plot_4)
+pair_plot_4 <- pair_plots_plotter(post_sample = post_sample_4,
+                                  var_name = "horus data")
+print(pair_plot_4)
+```
+
+```{r message=FALSE,warning=FALSE}
+post_estimates_4 <- apply(post_sample_4,2,mean)
+post_estimates_4
 ```
 
 ```{r}
