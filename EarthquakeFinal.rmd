@@ -3,8 +3,9 @@ title: "Earthquake forecasting"
 author: "Saksham"
 date: "2023-08-01"
 output:
-  pdf_document: default
   html_document: default
+  pdf_document: default
+  word_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -106,6 +107,21 @@ abline(h=mean(countEventsInYear), col=2)
 ```{r message=FALSE,warning=FALSE}
 italy.map <- ne_countries(country = 'Italy', returnclass = "sf", scale = 'medium')
 italy.crs <- crs(italy.map)
+```
+
+```{r}
+
+ggplot() +
+  geom_sf(data = df_cat.sf[df_cat$M > 3 & df_cat$M < 4.5,], aes(color = "Small Earthquakes"), size = 0.05) +
+  geom_sf(data = italy.map, fill = alpha("lightgrey", 0), color = 'green', linewidth = 0.7, aes(fill = "Italy Map")) +
+  geom_sf(data = df_cat.sf[df_cat$M >= 4.5,], aes(color = "Large Earthquakes"), size = 0.5) +
+  scale_color_manual(values = c("Small Earthquakes" = "black", "Large Earthquakes" = "orange"),
+                     labels = c("Small Earthquakes" = "Small earthquakes with magnitude greater than 3", "Large Earthquakes" = "Large earthquakes")) +
+  scale_fill_manual(values = c("Italy Map" = "lightgrey")) +
+  labs(title = "Map of Event Locations", color = "Legend") +
+  theme_minimal() +
+  theme(legend.position = "right")
+
 ```
 
 ```{r message=FALSE,warning=FALSE}
@@ -1260,8 +1276,9 @@ invisible({
 
 ```{r}
 aquila.bru.copy <- aquila.bru
+# aquila.bru.copy <- subset(aquila.bru.copy, select = -idx.p)
 aquila.bru.copy <- aquila.bru.copy %>%
-  mutate(consecutive_difference = c(first(ts), diff(ts)))
+  mutate(consecutive_difference = c(first(ts),diff(ts)))
 best_dfs_copy <- best_dfs
 best_dfs_copy <- lapply(best_dfs_copy, function(df) {
   df %>%
@@ -1269,7 +1286,7 @@ best_dfs_copy <- lapply(best_dfs_copy, function(df) {
 })
 ```
 
-```{r message=FALSE,warning=FALSE}
+```{r}
 # Define the plot_cdf function
 plot_cdf <- function(full_data, data_name) {
   # Calculate the ECDF of the "consecutive difference" column
@@ -1285,7 +1302,7 @@ plot_cdf <- function(full_data, data_name) {
 
 # Combine the datasets for plotting
 all_datasets <- c(list(aquila.bru.copy), best_dfs_copy)
-all_names <- c("aquila.bru.copy", sapply(seq_along(best_dfs_copy), function(i) paste(" Synthetic Dataset", i)))
+all_names <- c("Horus catalogue", sapply(seq_along(best_dfs_copy), function(i) paste("Synthetic Dataset", i)))
 
 # Make sure all datasets have the same column names
 column_names <- colnames(all_datasets[[1]])
@@ -1314,29 +1331,14 @@ horus_post_estimates
 
 # Parameter differences
 
-```{r message=FALSE,warning=FALSE}
-# synthetic_data <- generate_synthetic_data()
-# fit_model_1 <- model_fit(full_data = aquila.bru,
-#                          magnitude = M0,
-#                          start_time = T1,
-#                          end_time = T2,
-#                          link_functions = non_informative_priors,
-#                          bru_options_list = bru.opt.list)
-```
-
-```{r message=FALSE,warning=FALSE}
-# input_list_1 <- get_input_list(fitted_model = fit_model_1,
-#                                link_functions = non_informative_priors)
-# 
-# post_sample_1 <- get_post_sample(input_list = input_list_1)
-# marg_plot_1 <- marg_posterior(input_list = input_list_1,
-#                               var_name = "horus data",
-#                               num.cores = num.cores)
-# print(marg_plot_1)
-# pair_plot_1 <- pair_plots_plotter(post_sample = post_sample_1,
-#                                   var_name = "horus data")
-# print(pair_plot_1)
-
+```{r}
+non_informative_priors <- list(
+  mu = \(x) gamma_t(x, 0.3, 0.6),
+  K = \(x) gamma_t(x, 0.3, 0.6),
+  alpha = \(x) gamma_t(x, 0.3, 0.6),
+  c_ = \(x) gamma_t(x, 0.3, 0.6),
+  p = \(x) unif_t(x, 1, 10)
+)
 ```
 
 ```{r message=FALSE,warning=FALSE}
@@ -1385,11 +1387,11 @@ input_list_3 <- get_input_list(fitted_model = fit_model_3,
 
 post_sample_3 <- get_post_sample(input_list = input_list_3)
 marg_plot_3 <- marg_posterior(input_list = input_list_3,
-                              var_name = "horus data",
+                              var_name = "synthetic data",
                               num.cores = num.cores)
 print(marg_plot_3)
 pair_plot_3 <- pair_plots_plotter(post_sample = post_sample_3,
-                                  var_name = "horus data")
+                                  var_name = "synthetic data")
 print(pair_plot_3)
 ```
 
